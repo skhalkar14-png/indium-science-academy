@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "709631754580",
+    "project_id": "indium-education-app",
+    "storage_bucket": "indium-education-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:709631754580:android:0fcec1f9f106f781db08c1",
+        "android_client_info": {
+          "package_name": "com.indium.educationapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDjQLNmUnfRH0v1HYNt4NvJkP11-zXDYyU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
