@@ -1,5 +1,14 @@
 package com.indium.educationapp
 
+
+import android.provider.OpenableColumns
+import android.graphics.Bitmap
+import android.util.Base64
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import java.io.ByteArrayOutputStream
+import java.io.FileOutputStream
+import java.util.UUID
 import android.app.DatePickerDialog
 import android.content.Intent
 import android.net.Uri
@@ -59,6 +68,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -68,7 +78,8 @@ import java.util.*
 
 
 
-
+const val HOMEWORK_UPLOAD_URL =
+    "https://script.google.com/macros/s/AKfycby3N77ze3UYA0zkG7i6h1aLpE4NyEcjTvzmzbAnnEWoU01QTaocuEP_kWxUPHWNJ-7i8A/exec"
 object CurrentUser {
     var teacherName: String = ""
     var mobile: String = ""
@@ -1960,6 +1971,23 @@ fun TimetableScreen(
 }
 
 
+fun isHomeworkClassMatch(studentClass: String, hwClass: String): Boolean {
+    val sTrim = studentClass.trim()
+    val hTrim = hwClass.trim()
+    if (sTrim.isEmpty() || hTrim.isEmpty()) return false
+    if (sTrim.equals(hTrim, ignoreCase = true)) return true
+
+    val sDigits = sTrim.filter { it.isDigit() }
+    val hDigits = hTrim.filter { it.isDigit() }
+
+    if (sDigits.isNotEmpty() && hDigits.isNotEmpty()) {
+        return sDigits == hDigits
+    }
+
+    return sTrim.contains(hTrim, ignoreCase = true) || hTrim.contains(sTrim, ignoreCase = true)
+}
+
+
 // ======================================================
 // HOMEWORK SCREEN
 // ======================================================
@@ -1972,6 +2000,52 @@ fun HomeworkScreen(
         onBack()
     }
 
+    val context = LocalContext.current
+    val firestore = remember {
+        FirebaseFirestore.getInstance()
+    }
+
+    var homeworkList by remember {
+        mutableStateOf<List<Map<String, Any>>>(emptyList())
+    }
+
+    var isLoading by remember {
+        mutableStateOf(true)
+    }
+
+    var errorMessage by remember {
+        mutableStateOf("")
+    }
+
+    LaunchedEffect(Unit) {
+
+        firestore.collection("homework")
+            .get()
+            .addOnSuccessListener { documents ->
+
+                val studentClass = CurrentUser.className
+
+                homeworkList = documents.documents.mapNotNull { document ->
+                    val data = document.data ?: return@mapNotNull null
+                    val hwClass = data["class"]?.toString() ?: ""
+                    if (isHomeworkClassMatch(studentClass, hwClass)) {
+                        data
+                    } else {
+                        null
+                    }
+                }
+
+                isLoading = false
+            }
+            .addOnFailureListener { e ->
+
+                isLoading = false
+
+                errorMessage =
+                    "Could not load homework: ${e.message}"
+            }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1979,45 +2053,181 @@ fun HomeworkScreen(
             .padding(16.dp)
             .verticalScroll(rememberScrollState())
     ) {
+
         IndiumCard(
             modifier = Modifier.fillMaxWidth(),
             containerColor = Color(0xFF7C4DFF),
             contentColor = Color.White
         ) {
-            Column(modifier = Modifier.padding(20.dp)) {
-                Text(text = "Homework", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
-                Text(text = "Complete your tasks on time!", style = MaterialTheme.typography.bodySmall)
+
+            Column(
+                modifier = Modifier.padding(20.dp)
+            ) {
+
+                Text(
+                    text = "Homework",
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontWeight = FontWeight.Bold
+                    )
+                )
+
+                Text(
+                    text = CurrentUser.className,
+                    style = MaterialTheme.typography.bodyMedium
+                )
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
-        HomeworkItem("Mathematics", "Complete Exercise 5.1 and 5.2 from textbooks.", "Due: Tomorrow")
-        HomeworkItem("Science", "Draw and label the human respiratory system.", "Due: 18 Sep")
-        HomeworkItem("English", "Write a letter to your friend about your holidays.", "Due: Friday")
+        if (isLoading) {
 
-        Spacer(modifier = Modifier.height(32.dp))
-        IndiumButton(text = "BACK", onClick = onBack)
-    }
-}
-
-@Composable
-fun HomeworkItem(subject: String, task: String, dueDate: String) {
-    IndiumCard(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-        containerColor = Color.White
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(text = subject, fontWeight = FontWeight.Bold, color = Color(0xFF7C4DFF))
-                Text(text = dueDate, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(
+                    color = Color(0xFF7C4DFF)
+                )
             }
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(text = task, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF252238))
+
+        } else if (errorMessage.isNotEmpty()) {
+
+            Text(
+                text = errorMessage,
+                color = Color.Red,
+                fontWeight = FontWeight.Bold
+            )
+
+        } else if (homeworkList.isEmpty()) {
+
+            Text(
+                text = "No homework has been posted yet.",
+                fontSize = 18.sp
+            )
+
+        } else {
+
+            homeworkList
+                .sortedByDescending {
+                    (it["createdAt"] as? Number)?.toLong() ?: 0L
+                }
+                .forEach { homework ->
+
+                    val subject =
+                        homework["subject"]?.toString() ?: ""
+
+                    val details =
+                        homework["homework"]?.toString() ?: ""
+
+                    val dueDate =
+                        homework["dueDate"]?.toString() ?: ""
+
+                    val attachmentName =
+                        homework["attachmentName"]?.toString() ?: ""
+
+                    val attachmentUrl =
+                        homework["attachmentUrl"]?.toString() ?: ""
+
+                    IndiumCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        containerColor = Color.White
+                    ) {
+
+                        Column(
+                            modifier = Modifier.padding(18.dp)
+                        ) {
+
+                            Text(
+                                text = "📖 $subject",
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF7C4DFF)
+                            )
+
+                            Spacer(
+                                modifier = Modifier.height(10.dp)
+                            )
+
+                            Text(
+                                text = details,
+                                fontSize = 17.sp,
+                                color = Color(0xFF252238)
+                            )
+
+                            if (dueDate.isNotBlank()) {
+
+                                Spacer(
+                                    modifier = Modifier.height(10.dp)
+                                )
+
+                                Text(
+                                    text = "📅 Due: $dueDate",
+                                    fontSize = 16.sp,
+                                    color = Color.Gray
+                                )
+                            }
+
+                            if (
+                                attachmentName.isNotBlank() &&
+                                attachmentUrl.isNotBlank()
+                            ) {
+
+                                Spacer(
+                                    modifier = Modifier.height(12.dp)
+                                )
+
+                                Text(
+                                    text = "📎 $attachmentName",
+                                    fontWeight = FontWeight.Bold
+                                )
+
+                                Spacer(
+                                    modifier = Modifier.height(8.dp)
+                                )
+
+                                Button(
+                                    onClick = {
+
+                                        try {
+
+                                            val intent =
+                                                Intent(
+                                                    Intent.ACTION_VIEW,
+                                                    Uri.parse(attachmentUrl)
+                                                )
+
+                                            context.startActivity(intent)
+
+                                        } catch (e: Exception) {
+
+                                            Toast.makeText(
+                                                context,
+                                                "Unable to open attachment",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("📂 OPEN ATTACHMENT")
+                                }
+                            }
+                        }
+                    }
+                }
         }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        IndiumButton(
+            text = "BACK",
+            onClick = onBack
+        )
     }
 }
-
 
 @Composable
 fun TeacherHomeworkScreen(
@@ -2027,8 +2237,123 @@ fun TeacherHomeworkScreen(
         onBack()
     }
 
-    var subject by remember { mutableStateOf("") }
-    var details by remember { mutableStateOf("") }
+    val context = LocalContext.current
+
+    val firestore = remember {
+        FirebaseFirestore.getInstance()
+    }
+
+    val classList = listOf(
+        "1st Standard",
+        "2nd Standard",
+        "3rd Standard",
+        "4th Standard",
+        "5th Standard",
+        "6th Standard",
+        "7th Standard",
+        "8th Standard",
+        "9th Standard",
+        "10th Standard"
+    )
+
+    var selectedClass by remember {
+        mutableStateOf(classList.last())
+    }
+
+    var classDropdownExpanded by remember {
+        mutableStateOf(false)
+    }
+
+    var subject by remember {
+        mutableStateOf("")
+    }
+
+    var homework by remember {
+        mutableStateOf("")
+    }
+
+    var dueDate by remember {
+        mutableStateOf("")
+    }
+
+    var attachmentUri by remember {
+        mutableStateOf<Uri?>(null)
+    }
+
+    var attachmentName by remember {
+        mutableStateOf("")
+    }
+
+    var attachmentMimeType by remember {
+        mutableStateOf("")
+    }
+
+    var saveMessage by remember {
+        mutableStateOf("")
+    }
+
+    var isUploading by remember {
+        mutableStateOf(false)
+    }
+
+    // --------------------------------------------------
+    // PDF / IMAGE PICKER
+    // --------------------------------------------------
+
+    val filePicker =
+        rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.OpenDocument()
+        ) { uri ->
+
+            if (uri != null) {
+
+                attachmentUri = uri
+
+                attachmentName =
+                    getHomeworkFileName(
+                        context,
+                        uri
+                    ) ?: "Homework Attachment"
+
+                attachmentMimeType =
+                    context.contentResolver.getType(uri)
+                        ?: "application/octet-stream"
+
+                saveMessage = ""
+            }
+        }
+
+    // --------------------------------------------------
+    // CAMERA
+    // --------------------------------------------------
+
+    val cameraLauncher =
+        rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.TakePicturePreview()
+        ) { bitmap ->
+
+            if (bitmap != null) {
+
+                val tempUri =
+                    saveHomeworkBitmap(
+                        context,
+                        bitmap
+                    )
+
+                if (tempUri != null) {
+
+                    attachmentUri = tempUri
+
+                    attachmentName =
+                        "Homework_Photo_${System.currentTimeMillis()}.jpg"
+
+                    attachmentMimeType =
+                        "image/jpeg"
+
+                    saveMessage = ""
+                }
+            }
+        }
 
     Column(
         modifier = Modifier
@@ -2037,36 +2362,564 @@ fun TeacherHomeworkScreen(
             .padding(16.dp)
             .verticalScroll(rememberScrollState())
     ) {
-        IndiumCard(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp)) {
+
+        Text(
+            text = "📚 Assign Homework",
+            fontSize = 28.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(
+            modifier = Modifier.height(20.dp)
+        )
+
+        // --------------------------------------------------
+        // CLASS
+        // --------------------------------------------------
+
+        Text(
+            text = "Select Class",
+            fontSize = 17.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(
+            modifier = Modifier.height(6.dp)
+        )
+
+        Box(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+
+            OutlinedButton(
+                onClick = {
+                    classDropdownExpanded =
+                        !classDropdownExpanded
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Text(
-                    text = "Assign Homework",
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, color = Color(0xFF673AB7))
+                    text = selectedClass
                 )
-                Spacer(modifier = Modifier.height(16.dp))
-                OutlinedTextField(
-                    value = subject,
-                    onValueChange = { subject = it },
-                    label = { Text("Subject") },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = details,
-                    onValueChange = { details = it },
-                    label = { Text("Homework Details") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 3,
-                    shape = RoundedCornerShape(12.dp)
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                IndiumButton(text = "PUBLISH HOMEWORK", onClick = { /* Publish Logic */ }, containerColor = Color(0xFF7C4DFF))
+            }
+
+            DropdownMenu(
+                expanded = classDropdownExpanded,
+                onDismissRequest = {
+                    classDropdownExpanded = false
+                }
+            ) {
+
+                classList.forEach { className ->
+
+                    DropdownMenuItem(
+                        text = {
+                            Text(className)
+                        },
+                        onClick = {
+
+                            selectedClass = className
+
+                            classDropdownExpanded =
+                                false
+
+                            saveMessage = ""
+                        }
+                    )
+                }
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
-        IndiumOutlinedButton(text = "BACK", onClick = onBack)
+        Spacer(
+            modifier = Modifier.height(15.dp)
+        )
+
+        // --------------------------------------------------
+        // SUBJECT
+        // --------------------------------------------------
+
+        OutlinedTextField(
+            value = subject,
+            onValueChange = {
+                subject = it
+                saveMessage = ""
+            },
+            label = {
+                Text("Subject")
+            },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+
+        Spacer(
+            modifier = Modifier.height(12.dp)
+        )
+
+        // --------------------------------------------------
+        // HOMEWORK
+        // --------------------------------------------------
+
+        OutlinedTextField(
+            value = homework,
+            onValueChange = {
+                homework = it
+                saveMessage = ""
+            },
+            label = {
+                Text("Homework Details")
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(140.dp)
+        )
+
+        Spacer(
+            modifier = Modifier.height(12.dp)
+        )
+
+        // --------------------------------------------------
+        // DUE DATE
+        // --------------------------------------------------
+
+        OutlinedTextField(
+            value = dueDate,
+            onValueChange = {
+                dueDate = it
+                saveMessage = ""
+            },
+            label = {
+                Text("Due Date")
+            },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+
+        Spacer(
+            modifier = Modifier.height(18.dp)
+        )
+
+        // --------------------------------------------------
+        // PDF / IMAGE
+        // --------------------------------------------------
+
+        OutlinedButton(
+            onClick = {
+
+                filePicker.launch(
+                    arrayOf(
+                        "application/pdf",
+                        "image/jpeg",
+                        "image/png"
+                    )
+                )
+
+            },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !isUploading
+        ) {
+
+            Text("📎 ATTACH PDF / IMAGE")
+        }
+
+        Spacer(
+            modifier = Modifier.height(10.dp)
+        )
+
+        // --------------------------------------------------
+        // CAMERA
+        // --------------------------------------------------
+
+        OutlinedButton(
+            onClick = {
+
+                cameraLauncher.launch(null)
+
+            },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !isUploading
+        ) {
+
+            Text("📷 TAKE PHOTO")
+        }
+
+        if (attachmentName.isNotBlank()) {
+
+            Spacer(
+                modifier = Modifier.height(12.dp)
+            )
+
+            Text(
+                text = "📎 $attachmentName",
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Spacer(
+            modifier = Modifier.height(20.dp)
+        )
+
+        // --------------------------------------------------
+        // SAVE / UPLOAD
+        // --------------------------------------------------
+
+        Button(
+            onClick = {
+
+                if (subject.isBlank()) {
+
+                    saveMessage =
+                        "❌ Please enter subject."
+
+                    return@Button
+                }
+
+                if (homework.isBlank()) {
+
+                    saveMessage =
+                        "❌ Please enter homework details."
+
+                    return@Button
+                }
+
+                isUploading = true
+
+                saveMessage =
+                    "⏳ Publishing homework..."
+
+                CoroutineScope(Dispatchers.IO).launch {
+
+                    try {
+
+                        val homeworkId =
+                            UUID.randomUUID().toString()
+
+                        var attachmentUrl = ""
+
+                        // ----------------------------------
+                        // UPLOAD ATTACHMENT IF SELECTED
+                        // ----------------------------------
+
+                        if (attachmentUri != null) {
+
+                            val bytes =
+                                context.contentResolver
+                                    .openInputStream(
+                                        attachmentUri!!
+                                    )
+                                    ?.use {
+                                        it.readBytes()
+                                    }
+
+                            if (bytes == null) {
+
+                                throw Exception(
+                                    "Could not read attachment."
+                                )
+                            }
+
+                            val base64Data =
+                                Base64.encodeToString(
+                                    bytes,
+                                    Base64.NO_WRAP
+                                )
+
+                            val json =
+                                JSONObject().apply {
+
+                                    put(
+                                        "action",
+                                        "uploadHomeworkFile"
+                                    )
+
+                                    put(
+                                        "fileName",
+                                        attachmentName
+                                    )
+
+                                    put(
+                                        "mimeType",
+                                        attachmentMimeType
+                                    )
+
+                                    put(
+                                        "base64Data",
+                                        base64Data
+                                    )
+                                }
+
+                            val requestBodyText = json.toString()
+
+                            // ----------------------------------
+                            // POST FILE TO APPS SCRIPT
+                            // ----------------------------------
+
+                            val postConnection =
+                                (URL(HOMEWORK_UPLOAD_URL).openConnection()
+                                        as HttpURLConnection).apply {
+                                    requestMethod = "POST"
+                                    instanceFollowRedirects = false
+                                    connectTimeout = 30000
+                                    readTimeout = 60000
+                                    doOutput = true
+                                    setRequestProperty(
+                                        "Content-Type",
+                                        "application/json; charset=UTF-8"
+                                    )
+                                }
+
+                            postConnection.outputStream.use { output ->
+                                output.write(
+                                    requestBodyText.toByteArray(Charsets.UTF_8)
+                                )
+                            }
+
+                            // We intentionally do NOT parse the POST response.
+                            postConnection.responseCode
+                            postConnection.disconnect()
+
+                            // ----------------------------------
+                            // GET FILE INFORMATION
+                            // ----------------------------------
+
+                            val encodedFileName =
+                                URLEncoder.encode(
+                                    attachmentName,
+                                    "UTF-8"
+                                )
+
+                            val findUrl =
+                                "$HOMEWORK_UPLOAD_URL?action=findHomeworkFile" +
+                                "&fileName=$encodedFileName"
+
+                            val getClient =
+                                OkHttpClient.Builder()
+                                    .followRedirects(true)
+                                    .followSslRedirects(true)
+                                    .build()
+
+                            val getRequest =
+                                Request.Builder()
+                                    .url(findUrl)
+                                    .get()
+                                    .build()
+
+                            getClient.newCall(getRequest)
+                                .execute()
+                                .use { response ->
+
+                                    if (!response.isSuccessful) {
+                                        throw Exception(
+                                            "File information request failed: HTTP ${response.code}"
+                                        )
+                                    }
+
+                                    val responseText =
+                                        response.body?.string() ?: ""
+
+                                    if (responseText.isBlank()) {
+                                        throw Exception(
+                                            "Empty response received from upload server."
+                                        )
+                                    }
+
+                                    val responseJson =
+                                        try {
+                                            JSONObject(responseText)
+                                        } catch (e: Exception) {
+                                            throw Exception(
+                                                "Invalid file information response: " +
+                                                        responseText.take(300)
+                                            )
+                                        }
+
+                                    if (
+                                        !responseJson.optBoolean(
+                                            "success",
+                                            false
+                                        )
+                                    ) {
+                                        throw Exception(
+                                            responseJson.optString(
+                                                "error",
+                                                "Uploaded file was not found."
+                                            )
+                                        )
+                                    }
+
+                                    attachmentUrl =
+                                        responseJson.optString(
+                                            "downloadUrl",
+                                            ""
+                                        )
+
+                                    if (attachmentUrl.isBlank()) {
+                                        throw Exception(
+                                            "No file URL returned."
+                                        )
+                                    }
+                                }
+                        }
+
+                        // ----------------------------------
+                        // SAVE HOMEWORK TO FIRESTORE
+                        // ----------------------------------
+
+                        val homeworkData =
+                            hashMapOf<String, Any>(
+                                "class" to selectedClass,
+                                "subject" to subject.trim(),
+                                "homework" to homework.trim(),
+                                "dueDate" to dueDate.trim(),
+                                "attachmentName" to attachmentName,
+                                "attachmentUrl" to attachmentUrl,
+                                "attachmentMimeType" to attachmentMimeType,
+                                "teacherName" to CurrentUser.name,
+                                "createdAt" to System.currentTimeMillis()
+                            )
+
+                        withContext(Dispatchers.Main) {
+
+                            firestore
+                                .collection("homework")
+                                .document(homeworkId)
+                                .set(homeworkData)
+                                .addOnSuccessListener {
+
+                                    isUploading = false
+
+                                    saveMessage =
+                                        "✅ Homework published successfully!"
+
+                                    subject = ""
+                                    homework = ""
+                                    dueDate = ""
+                                    attachmentUri = null
+                                    attachmentName = ""
+                                    attachmentMimeType = ""
+                                }
+                                .addOnFailureListener { e ->
+
+                                    isUploading = false
+
+                                    saveMessage =
+                                        "❌ Firestore error: ${e.message}"
+                                }
+                        }
+
+                    } catch (e: Exception) {
+
+                        withContext(Dispatchers.Main) {
+
+                            isUploading = false
+
+                            saveMessage =
+                                "❌ ${e.message}"
+                        }
+                    }
+                }
+
+            },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !isUploading
+        ) {
+
+            Text(
+                if (isUploading)
+                    "⏳ UPLOADING..."
+                else
+                    "💾 PUBLISH HOMEWORK"
+            )
+        }
+
+        if (saveMessage.isNotBlank()) {
+
+            Spacer(
+                modifier = Modifier.height(12.dp)
+            )
+
+            Text(
+                text = saveMessage,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Spacer(
+            modifier = Modifier.height(20.dp)
+        )
+
+        IndiumOutlinedButton(
+            text = "BACK",
+            onClick = onBack,
+        )
+    }
+}
+
+fun getHomeworkFileName(
+    context: Context,
+    uri: Uri
+): String? {
+
+    var fileName: String? = null
+
+    context.contentResolver
+        .query(
+            uri,
+            null,
+            null,
+            null,
+            null
+        )
+        ?.use { cursor ->
+
+            val nameIndex =
+                cursor.getColumnIndex(
+                    OpenableColumns.DISPLAY_NAME
+                )
+
+            if (
+                nameIndex >= 0 &&
+                cursor.moveToFirst()
+            ) {
+                fileName =
+                    cursor.getString(nameIndex)
+            }
+        }
+
+    return fileName
+}
+
+
+fun saveHomeworkBitmap(
+    context: Context,
+    bitmap: Bitmap
+): Uri? {
+
+    return try {
+
+        val fileName =
+            "homework_photo_${System.currentTimeMillis()}.jpg"
+
+        val file =
+            File(
+                context.cacheDir,
+                fileName
+            )
+
+        FileOutputStream(file).use { output ->
+
+            bitmap.compress(
+                Bitmap.CompressFormat.JPEG,
+                80,
+                output
+            )
+        }
+
+        Uri.fromFile(file)
+
+    } catch (e: Exception) {
+
+        null
     }
 }
 
@@ -2977,96 +3830,590 @@ fun ResultSubjectItem(subject: String, obtained: String, total: String) {
     }
 }
 
+data class TestHistoryEntry(
+    val timestamp: String,
+    val standard: String,
+    val subject: String,
+    val examName: String,
+    val records: List<Map<String, String>>
+)
+
 @Composable
 fun TeacherResultsHistoryScreen(
     onBack: () -> Unit
 ) {
     BackHandler { onBack() }
 
-    val scriptUrl = "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec"
+    val scope = rememberCoroutineScope()
 
-    var selectedSubject by remember { mutableStateOf("All Subjects") }
-    var showSubjectMenu by remember { mutableStateOf(false) }
+    val scriptUrl =
+        "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec"
 
-    var isLoading by remember { mutableStateOf(true) }
-    var refreshing by remember { mutableStateOf(false) }
+    val classList = listOf(
+        "1st Standard",
+        "2nd Standard",
+        "3rd Standard",
+        "4th Standard",
+        "5th Standard",
+        "6th Standard",
+        "7th Standard",
+        "8th Standard",
+        "9th Standard",
+        "10th Standard"
+    )
+
+    var selectedClass by remember { mutableStateOf("10th Standard") }
+    var showClassMenu by remember { mutableStateOf(false) }
+
+    var subject by remember { mutableStateOf("") }
+
+    var isSearching by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf("") }
-    var allResults by remember { mutableStateOf<List<Map<String, Any>>>(emptyList()) }
-    var availableSubjects by remember { mutableStateOf<List<String>>(listOf("All Subjects")) }
 
-    fun loadHistory(isRefresh: Boolean = false) {
-        if (isRefresh) refreshing = true else isLoading = true
+    var testHistory by remember {
+        mutableStateOf<List<TestHistoryEntry>>(emptyList())
+    }
+
+    var selectedTest by remember {
+        mutableStateOf<TestHistoryEntry?>(null)
+    }
+
+    /*
+     * SEARCH
+     */
+    fun searchResults() {
+
+        val enteredSubject = subject.trim()
+
+        if (enteredSubject.isBlank()) {
+            errorMessage = "Please enter a subject name."
+            testHistory = emptyList()
+            return
+        }
+
+        if (isSearching) return
+
+        isSearching = true
         errorMessage = ""
-        CoroutineScope(Dispatchers.IO).launch {
+        testHistory = emptyList()
+
+        scope.launch {
+
             try {
-                val urlString = "$scriptUrl?action=getTeacherResults"
-                val connection = URL(urlString).openConnection() as HttpURLConnection
-                connection.requestMethod = "GET"
-                connection.connectTimeout = 30000
-                connection.readTimeout = 30000
-                connection.instanceFollowRedirects = true
 
-                if (connection.responseCode == 200) {
-                    val res = connection.inputStream.bufferedReader().use { it.readText() }
-                    val json = JSONObject(res)
-                    if (json.optBoolean("success")) {
-                        val arr = json.optJSONArray("results") ?: JSONArray()
-                        val list = mutableListOf<Map<String, Any>>()
-                        val subjectsSet = mutableSetOf<String>()
-                        for (i in 0 until arr.length()) {
-                            val item = arr.getJSONObject(i)
-                            val map = mutableMapOf<String, Any>()
-                            val sub = item.optString("subject").trim()
-                            if (sub.isNotBlank()) subjectsSet.add(sub)
+                val response = withContext(Dispatchers.IO) {
 
-                            map["timestamp"] = item.optString("timestamp")
-                            map["standard"] = item.optString("standard")
-                            map["studentName"] = item.optString("studentName")
-                            map["rollNo"] = item.optString("rollNo")
-                            map["subject"] = sub
-                            map["examName"] = "Weekly Class Test"
-                            map["obtainedMarks"] = item.optDouble("obtainedMarks", 0.0)
-                            map["maxMarks"] = item.optDouble("maxMarks", 100.0)
-                            list.add(map)
-                        }
-                        withContext(Dispatchers.Main) {
-                            allResults = list
-                            availableSubjects = listOf("All Subjects") + subjectsSet.sorted()
-                            isLoading = false
-                            refreshing = false
-                        }
+                    val encodedStandard =
+                        URLEncoder.encode(selectedClass, "UTF-8")
+
+                    val encodedSubject =
+                        URLEncoder.encode(enteredSubject, "UTF-8")
+
+                    val urlString =
+                        "$scriptUrl?action=getTeacherResultsHistory" +
+                                "&standard=$encodedStandard" +
+                                "&subject=$encodedSubject"
+
+                    val connection = URL(urlString).openConnection() as HttpURLConnection
+                    connection.requestMethod = "GET"
+                    connection.connectTimeout = 30000
+                    connection.readTimeout = 30000
+                    connection.instanceFollowRedirects = true
+
+                    if (connection.responseCode == 200) {
+
+                        connection.inputStream
+                            .bufferedReader()
+                            .use { it.readText() }
+
                     } else {
-                        withContext(Dispatchers.Main) {
-                            errorMessage = "Unable to refresh. Please try again."
-                            isLoading = false
-                            refreshing = false
+                        null
+                    }
+                }
+
+                if (response == null) {
+
+                    errorMessage =
+                        "Unable to retrieve results. Please try again."
+
+                    return@launch
+                }
+
+                val json = JSONObject(response)
+
+                if (!json.optBoolean("success")) {
+
+                    errorMessage =
+                        json.optString(
+                            "error",
+                            "Unable to retrieve results."
+                        )
+
+                    return@launch
+                }
+
+                val resultsArray =
+                    json.optJSONArray("results") ?: JSONArray()
+
+                val matchingRecords =
+                    mutableListOf<Map<String, String>>()
+
+                /*
+                 * Filter:
+                 * Standard = selected standard
+                 * Subject = manually entered subject
+                 */
+                for (i in 0 until resultsArray.length()) {
+
+                    val item =
+                        resultsArray.getJSONObject(i)
+
+                    val recordStandard =
+                        item.optString("standard").trim()
+
+                    val recordSubject =
+                        item.optString("subject").trim()
+
+                    if (
+                        recordStandard.equals(
+                            selectedClass,
+                            ignoreCase = true
+                        ) &&
+                        recordSubject.equals(
+                            enteredSubject,
+                            ignoreCase = true
+                        )
+                    ) {
+
+                        val record =
+                            mapOf(
+                                "timestamp" to
+                                        item.optString("timestamp").trim(),
+
+                                "standard" to
+                                        recordStandard,
+
+                                "subject" to
+                                        recordSubject,
+
+                                "studentName" to
+                                        item.optString("studentName").trim(),
+
+                                "rollNo" to
+                                        item.optString("rollNo").trim(),
+
+                                "examName" to
+                                        item.optString("examName").trim(),
+
+                                "obtainedMarks" to
+                                        item.optString("obtainedMarks").trim(),
+
+                                "maxMarks" to
+                                        item.optString("maxMarks").trim()
+                            )
+
+                        matchingRecords.add(record)
+                    }
+                }
+
+                /*
+                 * Group students belonging to the same saved test.
+                 *
+                 * Timestamp is used as the test-session identifier.
+                 */
+                val grouped =
+                    matchingRecords
+                        .groupBy { record ->
+
+                            record["timestamp"]
+                                ?.trim()
+                                .orEmpty()
                         }
-                    }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        errorMessage = "Unable to refresh. Please try again."
-                        isLoading = false
-                        refreshing = false
-                    }
-                }
+                        .filter { entry ->
+
+                            entry.key.isNotBlank()
+                        }
+                        .map { entry ->
+
+                            val records =
+                                entry.value
+
+                            val first =
+                                records.first()
+
+                            TestHistoryEntry(
+                                timestamp =
+                                    first["timestamp"].orEmpty(),
+
+                                standard =
+                                    first["standard"].orEmpty(),
+
+                                subject =
+                                    first["subject"].orEmpty(),
+
+                                examName =
+                                    first["examName"]
+                                        ?.takeIf { it.isNotBlank() }
+                                        ?: "Weekly Class Test",
+
+                                records =
+                                    records.sortedBy {
+
+                                        it["rollNo"]
+                                            ?.filter { c ->
+                                                c.isDigit()
+                                            }
+                                            ?.toIntOrNull()
+                                            ?: 9999
+                                    }
+                            )
+                        }
+                        .sortedByDescending {
+                            it.timestamp
+                        }
+
+                testHistory = grouped
+
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    errorMessage = "Unable to refresh. Please try again."
-                    isLoading = false
-                    refreshing = false
-                }
+
+                errorMessage =
+                    "Unable to retrieve results. Please try again."
+
+            } finally {
+
+                isSearching = false
             }
         }
     }
 
-    LaunchedEffect(Unit) {
-        loadHistory()
+    /*
+     * If a test has been selected, show Test Details.
+     */
+    if (selectedTest != null) {
+
+        TeacherTestDetailsScreen(
+            testEntry = selectedTest!!,
+            onBack = {
+                selectedTest = null
+            }
+        )
+
+        return
     }
 
-    val filteredResults = if (selectedSubject == "All Subjects") {
-        allResults
-    } else {
-        allResults.filter { it["subject"]?.toString().equals(selectedSubject, ignoreCase = true) }
+    /*
+     * RESULTS HISTORY UI
+     */
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFF7F4FF))
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+
+        /*
+         * Header
+         */
+        IndiumCard(
+            modifier = Modifier.fillMaxWidth(),
+            containerColor = Color(0xFF7C4DFF),
+            contentColor = Color.White
+        ) {
+
+            Text(
+                text = "Results History",
+                modifier = Modifier.padding(20.dp),
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontWeight = FontWeight.Bold
+                )
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        /*
+         * STANDARD
+         */
+        IndiumCard(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+
+                Text(
+                    text = "Select Standard",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = Color(0xFF673AB7)
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Box(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+
+                    IndiumOutlinedButton(
+                        text = selectedClass,
+                        onClick = {
+                            showClassMenu = true
+                        }
+                    )
+
+                    DropdownMenu(
+                        expanded = showClassMenu,
+                        onDismissRequest = {
+                            showClassMenu = false
+                        }
+                    ) {
+
+                        classList.forEach { cls ->
+
+                            DropdownMenuItem(
+                                text = {
+                                    Text(cls)
+                                },
+                                onClick = {
+
+                                    selectedClass = cls
+                                    showClassMenu = false
+
+                                    /*
+                                     * Clear previous search results
+                                     * when standard changes.
+                                     */
+                                    testHistory = emptyList()
+                                    errorMessage = ""
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        /*
+         * SUBJECT
+         */
+        IndiumCard(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+
+                Text(
+                    text = "Subject",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = Color(0xFF673AB7)
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = subject,
+                    onValueChange = {
+
+                        subject = it
+                        errorMessage = ""
+
+                    },
+                    label = {
+                        Text("Enter Subject Name")
+                    },
+                    placeholder = {
+                        Text("e.g. Mathematics")
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        /*
+         * SEARCH BUTTON
+         */
+        IndiumButton(
+            text = if (isSearching) {
+                "SEARCHING..."
+            } else {
+                "SEARCH"
+            },
+            onClick = {
+                searchResults()
+            },
+            enabled = !isSearching,
+            containerColor = Color(0xFF673AB7)
+        )
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        /*
+         * ERROR
+         */
+        if (errorMessage.isNotEmpty()) {
+
+            IndiumCard(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+
+                Text(
+                    text = errorMessage,
+                    modifier = Modifier.padding(16.dp),
+                    color = Color.Red,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        /*
+         * SEARCHING
+         */
+        if (isSearching) {
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(120.dp),
+                contentAlignment = Alignment.Center
+            ) {
+
+                CircularProgressIndicator(
+                    color = Color(0xFF7C4DFF)
+                )
+            }
+        }
+
+        /*
+         * TEST DATES
+         */
+        if (!isSearching && testHistory.isNotEmpty()) {
+
+            Text(
+                text = "Test Dates",
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp,
+                color = Color(0xFF252238)
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            testHistory.forEach { test ->
+
+                IndiumCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .clickable {
+                            selectedTest = test
+                        },
+                    containerColor = Color.White
+                ) {
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement =
+                            Arrangement.SpaceBetween,
+                        verticalAlignment =
+                            Alignment.CenterVertically
+                    ) {
+
+                        Column(
+                            modifier = Modifier.weight(1f)
+                        ) {
+
+                            Text(
+                                text = formatTestDate(
+                                    test.timestamp
+                                ),
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF252238),
+                                fontSize = 16.sp
+                            )
+
+                            if (test.examName.isNotBlank()) {
+
+                                Spacer(
+                                    modifier =
+                                        Modifier.height(3.dp)
+                                )
+
+                                Text(
+                                    text = test.examName,
+                                    style =
+                                        MaterialTheme.typography.bodySmall,
+                                    color = Color.Gray
+                                )
+                            }
+                        }
+
+                        Icon(
+                            imageVector =
+                                Icons.AutoMirrored.Filled.ArrowForwardIos,
+                            contentDescription = "View Test",
+                            tint = Color(0xFF7C4DFF),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        /*
+         * NO RESULTS
+         */
+        if (
+            !isSearching &&
+            errorMessage.isEmpty() &&
+            subject.isNotBlank() &&
+            testHistory.isEmpty()
+        ) {
+
+            IndiumCard(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+
+                Text(
+                    text = "No test history found.",
+                    modifier = Modifier.padding(16.dp),
+                    color = Color.Gray
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        IndiumOutlinedButton(
+            text = "BACK TO MENU",
+            onClick = onBack
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+    }
+}
+
+@Composable
+fun TeacherTestDetailsScreen(
+    testEntry: TestHistoryEntry,
+    onBack: () -> Unit
+) {
+
+    BackHandler {
+        onBack()
     }
 
     Column(
@@ -3076,122 +4423,190 @@ fun TeacherResultsHistoryScreen(
             .padding(16.dp)
             .verticalScroll(rememberScrollState())
     ) {
+
+        /*
+         * HEADER
+         */
         IndiumCard(
             modifier = Modifier.fillMaxWidth(),
             containerColor = Color(0xFF7C4DFF),
             contentColor = Color.White
         ) {
-            Row(
-                modifier = Modifier.padding(16.dp).fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+
+            Column(
+                modifier = Modifier.padding(20.dp)
             ) {
-                Column {
-                    Text(text = "Results History", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
-                    Text(text = "Review saved examination records", style = MaterialTheme.typography.bodySmall)
-                }
-                IconButton(
-                    onClick = { if (!refreshing) loadHistory(true) },
-                    enabled = !refreshing
+
+                Text(
+                    text = "Test Details",
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontWeight = FontWeight.Bold
+                    )
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "Standard: ${testEntry.standard}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+
+                Text(
+                    text = "Subject: ${testEntry.subject}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+
+                Text(
+                    text = "Test Date: ${
+                        formatTestDate(testEntry.timestamp)
+                    }",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+
+                Text(
+                    text = "Exam: ${testEntry.examName}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            text = "Student Marks",
+            fontWeight = FontWeight.Bold,
+            fontSize = 18.sp,
+            color = Color(0xFF252238)
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        /*
+         * STUDENT RESULTS
+         *
+         * Only records that were actually saved
+         * are present in testEntry.records.
+         */
+        testEntry.records.forEach { record ->
+
+            val obtained =
+                record["obtainedMarks"].orEmpty()
+
+            val maximum =
+                record["maxMarks"]
+                    ?.takeIf { it.isNotBlank() }
+                    ?: "0"
+
+            IndiumCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                containerColor = Color.White
+            ) {
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment =
+                        Alignment.CenterVertically
                 ) {
-                    if (refreshing) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White, strokeWidth = 2.dp)
-                    } else {
-                        Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh History", tint = Color.White)
+
+                    Column(
+                        modifier = Modifier.weight(1f)
+                    ) {
+
+                        Text(
+                            text =
+                                "${record["rollNo"].orEmpty()}. ${
+                                    record["studentName"].orEmpty()
+                                }",
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF252238)
+                        )
                     }
-                }
-            }
-        }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Subject Name Dropdown Filter Only
-        IndiumCard(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(text = "Filter by Subject", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFF673AB7))
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    IndiumOutlinedButton(text = selectedSubject, onClick = { showSubjectMenu = true })
-                    DropdownMenu(expanded = showSubjectMenu, onDismissRequest = { showSubjectMenu = false }) {
-                        availableSubjects.forEach { sub ->
-                            DropdownMenuItem(
-                                text = { Text(sub) },
-                                onClick = {
-                                    selectedSubject = sub
-                                    showSubjectMenu = false
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        if (isLoading) {
-            Box(modifier = Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Color(0xFF7C4DFF))
-            }
-        } else if (errorMessage.isNotEmpty()) {
-            IndiumCard(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(text = "Unable to refresh. Please try again.", color = Color.Red, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(12.dp))
-                    IndiumButton(
-                        text = "RETRY",
-                        onClick = { loadHistory(true) },
-                        containerColor = Color(0xFF7C4DFF)
+                    Text(
+                        text = "$obtained / $maximum",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 18.sp,
+                        color = Color(0xFF673AB7)
                     )
                 }
             }
-        } else if (filteredResults.isEmpty()) {
-            IndiumCard(modifier = Modifier.fillMaxWidth()) {
-                Text(text = "No saved examination results found for $selectedSubject.", modifier = Modifier.padding(16.dp), color = Color.Gray)
-            }
-        } else {
-            filteredResults.forEach { record ->
-                val obtained = record["obtainedMarks"]?.toString()?.toDoubleOrNull() ?: 0.0
-                val max = record["maxMarks"]?.toString()?.toDoubleOrNull() ?: 100.0
-                val percentage = if (max > 0) (obtained / max * 100).toInt() else 0
-
-                IndiumCard(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), containerColor = Color.White) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(text = "Roll No: ${record["rollNo"]} • ${record["studentName"]}", fontWeight = FontWeight.Bold, color = Color(0xFF252238))
-                            Surface(color = Color(0xFF7C4DFF).copy(alpha = 0.1f), shape = RoundedCornerShape(4.dp)) {
-                                Text(
-                                    text = record["standard"]?.toString() ?: "",
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = Color(0xFF7C4DFF),
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(text = "Exam: Weekly Class Test • Subject: ${record["subject"]}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Column {
-                                Text(text = "Obtained Marks: ${obtained.toInt()} / ${max.toInt()}", style = MaterialTheme.typography.bodyMedium, color = Color(0xFF252238))
-                            }
-                            Text(
-                                text = "$percentage%",
-                                fontWeight = FontWeight.ExtraBold,
-                                color = Color(0xFF673AB7),
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                        }
-                    }
-                }
-            }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
-        IndiumOutlinedButton(text = "BACK TO MENU", onClick = onBack)
+
+        IndiumOutlinedButton(
+            text = "BACK TO HISTORY",
+            onClick = onBack
+        )
+
         Spacer(modifier = Modifier.height(24.dp))
+    }
+}
+fun formatTestDate(timestamp: String): String {
+
+    if (timestamp.isBlank()) {
+        return "Unknown Date"
+    }
+
+    return try {
+
+        val cleanTimestamp =
+            timestamp.trim()
+
+        /*
+         * Handles:
+         * 2026-09-24T10:30:15
+         * 2026-09-24 10:30:15
+         * 2026-09-24
+         */
+        val datePart =
+            cleanTimestamp
+                .replace("T", " ")
+                .split(" ")
+                .firstOrNull()
+                ?: cleanTimestamp
+
+        val parts =
+            datePart.split("-")
+
+        if (parts.size == 3) {
+
+            val year = parts[0]
+            val month = parts[1].toInt()
+            val day = parts[2].toInt()
+
+            val monthNames = listOf(
+                "",
+                "January",
+                "February",
+                "March",
+                "April",
+                "May",
+                "June",
+                "July",
+                "August",
+                "September",
+                "October",
+                "November",
+                "December"
+            )
+
+            if (month in 1..12) {
+                "$day ${monthNames[month]} $year"
+            } else {
+                datePart
+            }
+
+        } else {
+            datePart
+        }
+
+    } catch (e: Exception) {
+        timestamp
     }
 }
 
