@@ -1162,6 +1162,9 @@ fun DashboardScreen(
         mutableStateOf(false)
     }
 
+    var isTeacherHistoryOpen by remember { mutableStateOf(false) }
+    var isNoticeHistoryOpen by remember { mutableStateOf(false) }
+
     var selectedProfileStudent by remember { mutableStateOf<SheetStudent?>(null) }
     var selectedProfileTeacher by remember { mutableStateOf<TeacherRecord?>(null) }
 
@@ -1283,10 +1286,12 @@ fun DashboardScreen(
 
         Scaffold(
             topBar = {
-                IndiumTopBar(
-                    title = screenName,
-                    onBack = { selectedScreen = null }
-                )
+                if (!(screenName == "My Attendance" && isTeacherHistoryOpen) && screenName != "Student Attendance" && !((screenName == "Notices" || screenName == "Notice Board") && isNoticeHistoryOpen)) {
+                    IndiumTopBar(
+                        title = screenName,
+                        onBack = { selectedScreen = null }
+                    )
+                }
             },
             containerColor = Color(0xFFF7F4FF)
         ) { padding ->
@@ -1307,7 +1312,10 @@ fun DashboardScreen(
                     }
                     "Study Material" -> StudyMaterialScreen(onBack = { selectedScreen = null })
                     "Attendance" -> AttendanceScreen(onBack = { selectedScreen = null })
-                    "My Attendance" -> TeacherAttendanceScreen(onBack = { selectedScreen = null })
+                    "My Attendance" -> TeacherAttendanceScreen(
+                        onBack = { selectedScreen = null },
+                        onHistoryStateChange = { isTeacherHistoryOpen = it }
+                    )
                     "Student Attendance" -> StudentAttendanceForTeacherScreen(onBack = { selectedScreen = null })
                     "Exams & Results" -> ResultsScreen(onBack = { selectedScreen = null })
                     "Exams & Marks" -> ResultsScreen(onBack = { selectedScreen = null })
@@ -1315,8 +1323,18 @@ fun DashboardScreen(
                     "Weekly Timetable" -> AdminWeeklyTimetableScreen(onBack = { selectedScreen = null })
                     "Today's All Lectures" -> AdminTodayLecturesScreen(onBack = { selectedScreen = null })
                     "Fees Structure" -> FeesScreen(onBack = { selectedScreen = null })
-                    "Notices" -> NoticeBoardScreen(userRole = CurrentUser.role, userName = CurrentUser.name, onBack = { selectedScreen = null })
-                    "Notice Board" -> NoticeBoardScreen(userRole = CurrentUser.role, userName = CurrentUser.name, onBack = { selectedScreen = null })
+                    "Notices" -> NoticeBoardScreen(
+                        userRole = CurrentUser.role,
+                        userName = CurrentUser.name,
+                        onBack = { selectedScreen = null },
+                        onNoticeHistoryStateChange = { isNoticeHistoryOpen = it }
+                    )
+                    "Notice Board" -> NoticeBoardScreen(
+                        userRole = CurrentUser.role,
+                        userName = CurrentUser.name,
+                        onBack = { selectedScreen = null },
+                        onNoticeHistoryStateChange = { isNoticeHistoryOpen = it }
+                    )
                     "Students" -> TeacherStudentsScreen(userRole = role, onBack = { selectedScreen = null })
                     "Teachers" -> {
                         if (role == "Admin") {
@@ -4018,17 +4036,16 @@ fun TeacherResultsHistoryScreen(
                 }
 
                 /*
-                 * Group students belonging to the same saved test.
-                 *
-                 * Timestamp is used as the test-session identifier.
+                 * Group students belonging to the same saved test uniquely by:
+                 * Standard + Formatted Test Date + Exam Name
                  */
                 val grouped =
                     matchingRecords
                         .groupBy { record ->
-
-                            record["timestamp"]
-                                ?.trim()
-                                .orEmpty()
+                            val std = record["standard"]?.trim().orEmpty()
+                            val dateStr = formatTestDate(record["timestamp"]?.trim().orEmpty())
+                            val exam = record["examName"]?.trim()?.takeIf { it.isNotBlank() } ?: "Weekly Class Test"
+                            "$std|$dateStr|$exam"
                         }
                         .filter { entry ->
 
@@ -4112,26 +4129,6 @@ fun TeacherResultsHistoryScreen(
             .padding(16.dp)
             .verticalScroll(rememberScrollState())
     ) {
-
-        /*
-         * Header
-         */
-        IndiumCard(
-            modifier = Modifier.fillMaxWidth(),
-            containerColor = Color(0xFF7C4DFF),
-            contentColor = Color.White
-        ) {
-
-            Text(
-                text = "Results History",
-                modifier = Modifier.padding(20.dp),
-                style = MaterialTheme.typography.titleLarge.copy(
-                    fontWeight = FontWeight.Bold
-                )
-            )
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
 
         /*
          * STANDARD
@@ -4794,7 +4791,8 @@ fun ProfileInfoItem(label: String, value: String) {
 // ======================================================
 @Composable
 fun TeacherAttendanceScreen(
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onHistoryStateChange: (Boolean) -> Unit = {}
 ) {
     BackHandler {
         onBack()
@@ -4814,6 +4812,10 @@ fun TeacherAttendanceScreen(
     var historyLoading by remember { mutableStateOf(false) }
     var historyError by remember { mutableStateOf("") }
     var historyList by remember { mutableStateOf<List<TeacherAttendanceRecord>>(emptyList()) }
+
+    LaunchedEffect(showHistory) {
+        onHistoryStateChange(showHistory)
+    }
 
     val attendanceUrl = "https://script.google.com/macros/s/AKfycbx3vXqB5Vs6DToJp5ArnnbuIGIvBzGwcLJFFUWtDrlBrD7dqLcRj7u89xNrskwPjrgu/exec"
 
@@ -6863,27 +6865,54 @@ fun ChangePasswordScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TeacherTodayLecturesScreen(
     onBack: () -> Unit
 ) {
+    val context = LocalContext.current
     val teacherName = CurrentUser.name
+    val kolkataTimeZone = remember { TimeZone.getTimeZone("Asia/Kolkata") }
+    val dateFormat = remember { SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).apply { timeZone = kolkataTimeZone } }
+    val displayDateFormat = remember { SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()).apply { timeZone = kolkataTimeZone } }
+    val dayNameFormat = remember { SimpleDateFormat("EEEE", Locale.getDefault()).apply { timeZone = kolkataTimeZone } }
+
+    var selectedCalendar by remember {
+        mutableStateOf(
+            Calendar.getInstance(kolkataTimeZone).apply {
+                set(Calendar.HOUR_OF_DAY, 12)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+        )
+    }
+    var showDatePicker by remember { mutableStateOf(false) }
+
     var loading by remember { mutableStateOf(true) }
     var refreshing by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf("") }
-    var day by remember { mutableStateOf("") }
-    var date by remember { mutableStateOf("") }
+    var isLeaveApplied by remember { mutableStateOf(false) }
     var lectures by remember { mutableStateOf<List<TodayLecture>>(emptyList()) }
 
-    fun loadLectures(isRefresh: Boolean = false) {
+    val currentDayName = dayNameFormat.format(selectedCalendar.time)
+    val currentDateText = displayDateFormat.format(selectedCalendar.time)
+
+    fun loadLecturesForDate(cal: Calendar, isRefresh: Boolean = false) {
         if (isRefresh) refreshing = true else loading = true
         errorMessage = ""
+        isLeaveApplied = false
+        lectures = emptyList()
+
+        val formattedDate = dateFormat.format(cal.time)
+
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val encodedTeacher = URLEncoder.encode(teacherName, "UTF-8")
-                val urlString = "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec?action=todayLectures&teacherName=$encodedTeacher"
-                
+                val encodedDate = URLEncoder.encode(formattedDate, "UTF-8")
+
+                val urlString =
+                    "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec?action=leaveLectures&teacherName=$encodedTeacher&date=$encodedDate"
+
                 val response = withContext(Dispatchers.IO) {
                     val connection = URL(urlString).openConnection() as HttpURLConnection
                     connection.connectTimeout = 30000
@@ -6896,30 +6925,93 @@ fun TeacherTodayLecturesScreen(
                     }
                 }
 
-                withContext(Dispatchers.Main) {
-                    if (response != null) {
-                        val json = JSONObject(response)
-                        if (json.optBoolean("success")) {
-                            day = json.optString("day")
-                            date = json.optString("date")
-                            val jsonLectures = json.optJSONArray("lectures") ?: JSONArray()
-                            val resultList = mutableListOf<TodayLecture>()
-                            for (i in 0 until jsonLectures.length()) {
-                                val item = jsonLectures.getJSONObject(i)
-                                resultList.add(TodayLecture(
-                                    time = item.optString("time"),
-                                    className = item.optString("className"),
-                                    subject = item.optString("subject"),
-                                    teacher = item.optString("teacher"),
-                                    adjusted = item.optBoolean("adjusted", false),
-                                    originalTeacher = item.optString("originalTeacher", "")
-                                ))
-                            }
+                if (response != null) {
+                    val json = JSONObject(response)
+                    if (json.optBoolean("success")) {
+                        val jsonLectures = json.optJSONArray("lectures") ?: JSONArray()
+                        val resultList = mutableListOf<TodayLecture>()
+                        for (i in 0 until jsonLectures.length()) {
+                            val item = jsonLectures.getJSONObject(i)
+                            val origTeacher = item.optString("originalTeacher", "")
+                            val adjTeacher = item.optString("adjustedTeacher", "")
+                            val isAdjusted = item.optBoolean("adjusted", false) || adjTeacher.isNotBlank()
+                            val displayTeacher = if (isAdjusted && adjTeacher.isNotBlank()) adjTeacher else item.optString("teacher", teacherName)
+
+                            resultList.add(TodayLecture(
+                                time = item.optString("time"),
+                                className = item.optString("className"),
+                                subject = item.optString("subject"),
+                                teacher = displayTeacher,
+                                adjusted = isAdjusted,
+                                originalTeacher = if (origTeacher.isNotBlank()) origTeacher else teacherName
+                            ))
+                        }
+                        withContext(Dispatchers.Main) {
                             lectures = resultList
-                        } else {
-                            errorMessage = json.optString("error", "No lectures found.")
                         }
                     } else {
+                        val err = json.optString("error", "")
+                        if (err.contains("Leave already applied", ignoreCase = true)) {
+                            withContext(Dispatchers.Main) {
+                                isLeaveApplied = true
+                            }
+                            // Secondary fetch: retrieve scheduled lectures for this day of week
+                            var fallbackLectures = emptyList<TodayLecture>()
+                            for (weeksAhead in 1..4) {
+                                val altCal = cal.clone() as Calendar
+                                altCal.add(Calendar.DAY_OF_MONTH, 7 * weeksAhead)
+                                val altDate = dateFormat.format(altCal.time)
+                                val altEncodedDate = URLEncoder.encode(altDate, "UTF-8")
+                                val altUrl = "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec?action=leaveLectures&teacherName=$encodedTeacher&date=$altEncodedDate"
+
+                                val altResponse = withContext(Dispatchers.IO) {
+                                    val conn = URL(altUrl).openConnection() as HttpURLConnection
+                                    conn.connectTimeout = 15000
+                                    conn.readTimeout = 15000
+                                    conn.instanceFollowRedirects = true
+                                    try {
+                                        if (conn.responseCode == 200) conn.inputStream.bufferedReader().use { it.readText() } else null
+                                    } finally {
+                                        conn.disconnect()
+                                    }
+                                }
+                                if (altResponse != null) {
+                                    val altJson = JSONObject(altResponse)
+                                    if (altJson.optBoolean("success")) {
+                                        val altArr = altJson.optJSONArray("lectures") ?: JSONArray()
+                                        val altList = mutableListOf<TodayLecture>()
+                                        for (i in 0 until altArr.length()) {
+                                            val item = altArr.getJSONObject(i)
+                                            val origTeacher = item.optString("originalTeacher", "")
+                                            val adjTeacher = item.optString("adjustedTeacher", "")
+                                            val isAdjusted = item.optBoolean("adjusted", false) || adjTeacher.isNotBlank()
+                                            val displayTeacher = if (isAdjusted && adjTeacher.isNotBlank()) adjTeacher else item.optString("teacher", teacherName)
+
+                                            altList.add(TodayLecture(
+                                                time = item.optString("time"),
+                                                className = item.optString("className"),
+                                                subject = item.optString("subject"),
+                                                teacher = displayTeacher,
+                                                adjusted = isAdjusted,
+                                                originalTeacher = if (origTeacher.isNotBlank()) origTeacher else teacherName
+                                            ))
+                                        }
+                                        fallbackLectures = altList
+                                        break
+                                    }
+                                }
+                            }
+                            withContext(Dispatchers.Main) {
+                                lectures = fallbackLectures
+                            }
+                        } else {
+                            withContext(Dispatchers.Main) {
+                                errorMessage = err
+                            }
+                        }
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
                         errorMessage = "Unable to refresh. Please try again."
                     }
                 }
@@ -6936,12 +7028,32 @@ fun TeacherTodayLecturesScreen(
         }
     }
 
-    LaunchedEffect(teacherName) {
-        loadLectures()
+    LaunchedEffect(selectedCalendar, teacherName) {
+        loadLecturesForDate(selectedCalendar)
+    }
+
+    if (showDatePicker) {
+        val dateSetListener = DatePickerDialog.OnDateSetListener { _, year, month, dayOfMonth ->
+            val cal = Calendar.getInstance(kolkataTimeZone).apply {
+                set(year, month, dayOfMonth, 12, 0, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            selectedCalendar = cal
+            showDatePicker = false
+        }
+        DatePickerDialog(
+            context,
+            dateSetListener,
+            selectedCalendar.get(Calendar.YEAR),
+            selectedCalendar.get(Calendar.MONTH),
+            selectedCalendar.get(Calendar.DAY_OF_MONTH)
+        ).apply {
+            setOnDismissListener { showDatePicker = false }
+        }.show()
     }
 
     Scaffold(
-        topBar = { IndiumTopBar(title = "Today's Lectures", onBack = onBack) },
+        topBar = { IndiumTopBar(title = "My Lectures", onBack = onBack) },
         containerColor = Color(0xFFF7F4FF)
     ) { padding ->
         Column(
@@ -6951,62 +7063,174 @@ fun TeacherTodayLecturesScreen(
                 .padding(16.dp)
                 .verticalScroll(rememberScrollState())
         ) {
-            if (loading) {
-                Box(modifier = Modifier.fillMaxWidth().height(300.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-            } else if (errorMessage.isNotBlank() && lectures.isEmpty()) {
-                IndiumCard(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(text = "Unable to refresh. Please try again.", color = Color.Red, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(text = errorMessage, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                        Spacer(modifier = Modifier.height(12.dp))
-                        IndiumButton(
-                            text = "RETRY",
-                            onClick = { loadLectures(true) },
-                            containerColor = Color(0xFF7C4DFF)
+            IndiumCard(
+                modifier = Modifier.fillMaxWidth(),
+                containerColor = Color(0xFF7C4DFF),
+                contentColor = Color.White
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = {
+                            val cal = selectedCalendar.clone() as Calendar
+                            cal.add(Calendar.DAY_OF_MONTH, -1)
+                            selectedCalendar = cal
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Previous Day",
+                            tint = Color.White
                         )
                     }
-                }
-            } else {
-                IndiumCard(modifier = Modifier.fillMaxWidth(), containerColor = Color(0xFF7C4DFF), contentColor = Color.White) {
-                    Row(
-                        modifier = Modifier.padding(16.dp).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.clickable { showDatePicker = true }
                     ) {
-                        Column {
-                            Text(text = day, style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
-                            Text(text = date, style = MaterialTheme.typography.bodySmall)
-                        }
+                        Text(
+                            text = currentDayName,
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = currentDateText,
+                            style = MaterialTheme.typography.bodySmall.copy(color = Color.White.copy(alpha = 0.9f))
+                        )
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         IconButton(
-                            onClick = { if (!refreshing) loadLectures(true) },
+                            onClick = { if (!refreshing) loadLecturesForDate(selectedCalendar, true) },
                             enabled = !refreshing
                         ) {
                             if (refreshing) {
-                                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White, strokeWidth = 2.dp)
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
                             } else {
-                                Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh Lectures", tint = Color.White)
+                                Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh", tint = Color.White)
                             }
+                        }
+
+                        IconButton(
+                            onClick = {
+                                val cal = selectedCalendar.clone() as Calendar
+                                cal.add(Calendar.DAY_OF_MONTH, 1)
+                                selectedCalendar = cal
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = "Next Day",
+                                tint = Color.White
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            if (loading) {
+                Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = Color(0xFF7C4DFF))
+                }
+            } else {
+                if (isLeaveApplied) {
+                    IndiumCard(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                        containerColor = Color(0xFFFFF3E0)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "⚠️ Leave applied for this date.",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFE65100)
+                            )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                if (lectures.isNotEmpty()) {
+                    Text(
+                        text = "Your Scheduled Lectures",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF252238)
+                        ),
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
 
-                lectures.forEach { lecture ->
-                    IndiumCard(
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                        containerColor = if (lecture.adjusted) Color(0xFFFFF3E0) else Color.White
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(text = lecture.time, fontWeight = FontWeight.ExtraBold, color = Color(0xFF7C4DFF))
-                                if (lecture.adjusted) Text("ADJUSTED", fontWeight = FontWeight.Bold, color = Color(0xFFE65100), style = MaterialTheme.typography.labelSmall)
+                    lectures.forEach { lecture ->
+                        IndiumCard(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                            containerColor = if (lecture.adjusted) Color(0xFFFFF3E0) else Color.White
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = lecture.time,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color(0xFF7C4DFF)
+                                    )
+                                    if (lecture.adjusted) {
+                                        Text(
+                                            text = "ADJUSTED",
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFFE65100),
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "${lecture.className} • ${lecture.subject}",
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF252238)
+                                )
+                                Text(
+                                    text = "Teacher: ${lecture.teacher}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.Gray
+                                )
+                                if (lecture.adjusted) {
+                                    Text(
+                                        text = "Adjusted from: ${lecture.originalTeacher}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color(0xFFE65100)
+                                    )
+                                }
                             }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(text = "${lecture.className} • ${lecture.subject}", fontWeight = FontWeight.Bold, color = Color(0xFF252238))
-                            Text(text = "Teacher: ${lecture.teacher}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                            if (lecture.adjusted) Text("Adjusted from: ${lecture.originalTeacher}", style = MaterialTheme.typography.labelSmall, color = Color(0xFFE65100))
+                        }
+                    }
+                } else {
+                    IndiumCard(modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier.padding(24.dp).fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.EventBusy,
+                                contentDescription = null,
+                                modifier = Modifier.size(48.dp),
+                                tint = Color.Gray
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = if (errorMessage.isNotBlank()) errorMessage else "No lectures scheduled for this date.",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.Gray
+                            )
                         }
                     }
                 }
@@ -7359,6 +7583,17 @@ fun TeacherLeaveScreen(
 
     LaunchedEffect(Unit) { loadTeachers(); loadLectures() }
 
+    if (showHistory) {
+        TeacherLeaveHistoryScreen(
+            historyList = historyList,
+            isLoading = historyLoading,
+            errorMessage = historyError,
+            onBack = { showHistory = false },
+            onRefresh = { loadLeaveHistory() }
+        )
+        return
+    }
+
     Scaffold(topBar = { IndiumTopBar("Apply Leave", onBack) }, containerColor = Color(0xFFF7F4FF)) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState())) {
             IndiumCard(modifier = Modifier.fillMaxWidth()) {
@@ -7438,6 +7673,10 @@ fun TeacherLeaveHistoryScreen(
     onBack: () -> Unit,
     onRefresh: () -> Unit
 ) {
+    BackHandler {
+        onBack()
+    }
+
     Scaffold(
         topBar = { IndiumTopBar(title = "My Leave History", onBack = onBack) },
         containerColor = Color(0xFFF7F4FF)
