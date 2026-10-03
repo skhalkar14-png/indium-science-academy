@@ -46,7 +46,6 @@ fun NoticeBoardScreen(
     onBack: () -> Unit,
     onNoticeHistoryStateChange: (Boolean) -> Unit = {}
 ) {
-    var notices by remember { mutableStateOf<List<Notice>>(emptyList()) }
     var pendingNotices by remember { mutableStateOf<List<PendingNotice>>(emptyList()) }
     var loadingPending by remember { mutableStateOf(false) }
     var pendingError by remember { mutableStateOf("") }
@@ -341,17 +340,98 @@ fun NoticeBoardScreen(
         }
     }
 
+    var firestoreNotices by remember { mutableStateOf<List<Notice>>(emptyList()) }
+    var apiNotices by remember { mutableStateOf<List<Notice>>(emptyList()) }
+
+    val isStudent = !isAdmin && !isTeacher
+
+    suspend fun fetchApiNotices() {
+        try {
+            val result = withContext(Dispatchers.IO) {
+                val urlString = "$NOTICE_API?action=list"
+                val connection = URL(urlString).openConnection() as HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 15000
+                connection.readTimeout = 15000
+                connection.instanceFollowRedirects = true
+                try {
+                    if (connection.responseCode == 200) {
+                        connection.inputStream.bufferedReader().use { it.readText() }
+                    } else null
+                } finally {
+                    connection.disconnect()
+                }
+            }
+
+            if (result != null) {
+                val json = JSONObject(result)
+                if (json.optBoolean("success")) {
+                    val array = json.optJSONArray("notices") ?: JSONArray()
+                    val list = mutableListOf<Notice>()
+                    val sdf = SimpleDateFormat("dd/MM/yyyy hh:mm a", Locale.ENGLISH)
+
+                    for (i in 0 until array.length()) {
+                        val obj = array.getJSONObject(i)
+                        val noticeId = obj.optString("noticeId")
+                        val noticeTitle = obj.optString("title")
+                        val noticeMessage = obj.optString("message")
+                        val noticeAudience = obj.optString("audience")
+                        val noticePostedBy = obj.optString("postedBy")
+                        val noticeDateStr = obj.optString("date")
+                        val status = obj.optString("status")
+
+                        val matchesAudience = if (isStudent) {
+                            noticeAudience.equals("Students", ignoreCase = true) ||
+                                    noticeAudience.equals("All", ignoreCase = true)
+                        } else true
+
+                        val isApproved = status.contains("APPROVED", ignoreCase = true) || obj.optBoolean("active", false)
+
+                        if (matchesAudience && isApproved && noticeTitle.isNotBlank()) {
+                            val parsedTimestamp = try {
+                                sdf.parse(noticeDateStr)?.time ?: System.currentTimeMillis()
+                            } catch (e: Exception) {
+                                System.currentTimeMillis()
+                            }
+
+                            list.add(
+                                Notice(
+                                    id = noticeId,
+                                    title = noticeTitle,
+                                    content = noticeMessage,
+                                    author = noticePostedBy,
+                                    timestamp = parsedTimestamp
+                                )
+                            )
+                        }
+                    }
+                    apiNotices = list
+                }
+            }
+        } catch (e: Exception) {
+            // Keep existing firestoreNotices on network failure
+        }
+    }
+
     LaunchedEffect(Unit) {
+        fetchApiNotices()
         db.collection("notices")
             .orderBy("timestamp", Query.Direction.DESCENDING)
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot != null) {
-                    notices = snapshot.documents.mapNotNull { doc ->
+                    firestoreNotices = snapshot.documents.mapNotNull { doc ->
                         val n = doc.toObject(Notice::class.java)
                         n?.copy(id = doc.id)
                     }
                 }
             }
+    }
+
+    val notices = remember(firestoreNotices, apiNotices) {
+        val combined = (apiNotices + firestoreNotices).distinctBy {
+            if (it.id.isNotBlank()) it.id else "${it.title}_${it.content}"
+        }
+        combined.sortedByDescending { it.timestamp }
     }
 
     LaunchedEffect(isAdmin) {

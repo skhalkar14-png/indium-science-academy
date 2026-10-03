@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -17,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.indium.educationapp.ui.theme.IndiumLavender
@@ -194,7 +196,9 @@ fun IndiumFeatureCard(
 fun IndiumDashboardHeader(
     userName: String,
     role: String,
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    notificationCount: Int = 0,
+    onNotificationClick: (() -> Unit)? = null
 ) {
     Column(
         modifier = Modifier
@@ -221,19 +225,63 @@ fun IndiumDashboardHeader(
                     )
                 )
             }
-            Surface(
-                onClick = onLogout,
-                color = IndiumLavender.copy(alpha = 0.15f),
-                shape = CircleShape,
-                modifier = Modifier.size(38.dp)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ExitToApp,
-                        contentDescription = "Logout",
-                        tint = IndiumDeepViolet,
-                        modifier = Modifier.size(18.dp)
-                    )
+                if (onNotificationClick != null) {
+                    Box {
+                        Surface(
+                            onClick = onNotificationClick,
+                            color = IndiumLavender.copy(alpha = 0.15f),
+                            shape = CircleShape,
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Notifications,
+                                    contentDescription = "Notifications",
+                                    tint = IndiumDeepViolet,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                        if (notificationCount > 0) {
+                            Surface(
+                                color = Color(0xFFF44336),
+                                shape = CircleShape,
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = 4.dp, y = (-4).dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = if (notificationCount > 9) "9+" else "$notificationCount",
+                                        color = Color.White,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Surface(
+                    onClick = onLogout,
+                    color = IndiumLavender.copy(alpha = 0.15f),
+                    shape = CircleShape,
+                    modifier = Modifier.size(38.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ExitToApp,
+                            contentDescription = "Logout",
+                            tint = IndiumDeepViolet,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
         }
@@ -282,6 +330,62 @@ fun IndiumDashboardHeader(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun TickerBanner(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (text.isBlank()) return
+
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
+        color = Color(0xFF7C4DFF).copy(alpha = 0.1f),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, Color(0xFF7C4DFF).copy(alpha = 0.3f))
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(horizontal = 12.dp, vertical = 10.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                color = Color(0xFF7C4DFF),
+                shape = CircleShape,
+                modifier = Modifier.size(24.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "🆕",
+                        fontSize = 12.sp
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF252238)
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+                contentDescription = "View",
+                tint = Color(0xFF7C4DFF),
+                modifier = Modifier.size(14.dp)
+            )
         }
     }
 }

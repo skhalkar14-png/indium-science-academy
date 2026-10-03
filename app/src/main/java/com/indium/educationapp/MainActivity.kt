@@ -3,6 +3,7 @@ package com.indium.educationapp
 
 import android.provider.OpenableColumns
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -13,6 +14,7 @@ import android.app.DatePickerDialog
 import android.content.Intent
 import android.net.Uri
 import com.google.firebase.firestore.DocumentSnapshot
+import com.google.firebase.firestore.Query
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Bundle
@@ -23,6 +25,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -30,6 +33,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -48,16 +52,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.android.gms.tasks.Tasks
 import com.google.firebase.FirebaseApp
 import com.google.firebase.firestore.FirebaseFirestore
 import com.indium.educationapp.ui.theme.*
@@ -1137,8 +1145,864 @@ fun RoleButton(
 
 
 // ======================================================
-// DASHBOARD
-// ======================================================
+data class AiChatMessage(
+    val role: String,
+    val text: String
+)
+
+data class AiMediaAttachment(
+    val mediaType: String,      // "image" or "pdf"
+    val mimeType: String,       // "image/jpeg" or "application/pdf"
+    val base64Data: String,
+    val displayName: String,
+    val previewBitmap: Bitmap? = null
+)
+
+fun scaleBitmap(bitmap: Bitmap, maxDimension: Int): Bitmap {
+    val width = bitmap.width
+    val height = bitmap.height
+    if (width <= maxDimension && height <= maxDimension) return bitmap
+
+    val ratio = width.toFloat() / height.toFloat()
+    val targetWidth: Int
+    val targetHeight: Int
+    if (width > height) {
+        targetWidth = maxDimension
+        targetHeight = (maxDimension / ratio).toInt()
+    } else {
+        targetHeight = maxDimension
+        targetWidth = (maxDimension * ratio).toInt()
+    }
+    return Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
+}
+
+fun cleanLatexMath(input: String): String {
+    var s = input
+    s = s.replace(Regex("""\\text\{([^\}]*?)\}""")) { m -> m.groupValues[1] }
+    s = s.replace(Regex("""\\frac\{([^\}]*?)\}\{([^\}]*?)\}""")) { m ->
+        "(${m.groupValues[1]} / ${m.groupValues[2]})"
+    }
+    s = s.replace(Regex("""\\x?rightarrow(?:\[.*?\])?(?:\{.*?\})?"""), " → ")
+    s = s.replace("\\to", " → ")
+    s = s.replace("\\times", "×")
+    s = s.replace("\\div", "÷")
+    s = s.replace("\\pm", "±")
+    s = s.replace("\\degree", "°")
+    s = s.replace("\\approx", "≈")
+    s = s.replace("\\neq", "≠")
+    s = s.replace("\\leq", "≤")
+    s = s.replace("\\geq", "≥")
+    s = s.replace(Regex("""\\([a-zA-Z]+)"""), "$1")
+    s = s.replace("**", "")
+    return s
+}
+
+fun formatAiResponse(rawText: String): String {
+    if (rawText.isBlank()) return rawText
+
+    var text = rawText
+
+    text = text.replace(Regex("""\$\$([\s\S]*?)\$\$""")) { match ->
+        cleanLatexMath(match.groupValues[1].trim())
+    }
+
+    text = text.replace(Regex("""\$([^\$\n]+?)\$""")) { match ->
+        cleanLatexMath(match.groupValues[1].trim())
+    }
+
+    text = text.replace("$$", "").replace("$", "")
+
+    val cleanedLines = text.lines().map { line ->
+        var l = line.trim()
+        l = l.replace(Regex("""^#{1,6}\s*"""), "")
+        l = l.replace(Regex("""^\*\*\s*(.*?)\s*\*\*\s*$""")) { m ->
+            m.groupValues[1]
+        }
+        l
+    }
+
+    var result = cleanedLines.joinToString("\n")
+    result = cleanLatexMath(result)
+    return result.trim()
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AiAssistantScreen(
+    onBack: () -> Unit
+) {
+    BackHandler {
+        onBack()
+    }
+
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val listState = rememberLazyListState()
+
+    var messages by remember { mutableStateOf<List<AiChatMessage>>(emptyList()) }
+    var inputText by remember { mutableStateOf("") }
+    var isThinking by remember { mutableStateOf(false) }
+    var selectedAttachment by remember { mutableStateOf<AiMediaAttachment?>(null) }
+
+    val studentClass = CurrentUser.className.ifBlank { "10th Standard" }
+    val studentBoard = CurrentUser.board.ifBlank { "CBSE" }
+    val aiScriptUrl = "https://script.google.com/macros/s/AKfycbznyefkzH06AQbqSm-8AYQaSxr-xnHfJWFXmCDU7-xQapPBF7fYeE9wNrl8vJ9ULnUK/exec"
+
+    val pdfLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            coroutineScope.launch(Dispatchers.IO) {
+                try {
+                    val fileName = getHomeworkFileName(context, uri) ?: "Document.pdf"
+                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    if (bytes == null || bytes.isEmpty()) {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "Could not read selected PDF file.", Toast.LENGTH_SHORT).show()
+                        }
+                        return@launch
+                    }
+                    if (bytes.size > 2 * 1024 * 1024) { // 2 MB limit
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "PDF size exceeds 2MB limit. Please select a smaller PDF.", Toast.LENGTH_LONG).show()
+                        }
+                        return@launch
+                    }
+                    val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                    withContext(Dispatchers.Main) {
+                        selectedAttachment = AiMediaAttachment(
+                            mediaType = "pdf",
+                            mimeType = "application/pdf",
+                            base64Data = base64,
+                            displayName = fileName
+                        )
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "Error reading PDF: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
+
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            coroutineScope.launch(Dispatchers.IO) {
+                try {
+                    val fileName = getHomeworkFileName(context, uri) ?: "Photo.jpg"
+                    val inputStream = context.contentResolver.openInputStream(uri)
+                    val originalBitmap = BitmapFactory.decodeStream(inputStream)
+                    inputStream?.close()
+
+                    if (originalBitmap == null) {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "Could not load selected image.", Toast.LENGTH_SHORT).show()
+                        }
+                        return@launch
+                    }
+
+                    val scaledBitmap = scaleBitmap(originalBitmap, 1024)
+                    val baos = ByteArrayOutputStream()
+                    scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 80, baos)
+                    val imageBytes = baos.toByteArray()
+                    val base64 = Base64.encodeToString(imageBytes, Base64.NO_WRAP)
+
+                    withContext(Dispatchers.Main) {
+                        selectedAttachment = AiMediaAttachment(
+                            mediaType = "image",
+                            mimeType = "image/jpeg",
+                            base64Data = base64,
+                            displayName = fileName,
+                            previewBitmap = scaledBitmap
+                        )
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "Error loading image: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap ->
+        if (bitmap != null) {
+            coroutineScope.launch(Dispatchers.IO) {
+                try {
+                    val scaledBitmap = scaleBitmap(bitmap, 1024)
+                    val baos = ByteArrayOutputStream()
+                    scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 80, baos)
+                    val imageBytes = baos.toByteArray()
+                    val base64 = Base64.encodeToString(imageBytes, Base64.NO_WRAP)
+
+                    withContext(Dispatchers.Main) {
+                        selectedAttachment = AiMediaAttachment(
+                            mediaType = "image",
+                            mimeType = "image/jpeg",
+                            base64Data = base64,
+                            displayName = "Camera_Photo.jpg",
+                            previewBitmap = scaledBitmap
+                        )
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "Error processing photo: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
+
+    fun sendMessage(questionText: String) {
+        val trimmed = questionText.trim()
+        val attachment = selectedAttachment
+        if ((trimmed.isBlank() && attachment == null) || isThinking) return
+
+        val displayPrompt = when {
+            attachment != null && trimmed.isNotBlank() -> "📎 [${attachment.displayName}]\n$trimmed"
+            attachment != null -> "📎 [${attachment.displayName}] Please analyze and explain this."
+            else -> trimmed
+        }
+
+        val userMsg = AiChatMessage(role = "user", text = displayPrompt)
+        val currentHistory = messages
+        messages = messages + userMsg
+        inputText = ""
+        selectedAttachment = null
+        isThinking = true
+
+        coroutineScope.launch {
+            listState.animateScrollToItem((messages.size - 1).coerceAtLeast(0))
+
+            try {
+                val timeoutMs = 90000
+
+                val response = withContext(Dispatchers.IO) {
+                    val conn = URL(aiScriptUrl).openConnection() as HttpURLConnection
+                    conn.requestMethod = "POST"
+                    conn.doOutput = true
+                    conn.connectTimeout = timeoutMs
+                    conn.readTimeout = timeoutMs
+                    conn.instanceFollowRedirects = false
+                    conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+
+                    val payload = if (attachment != null) {
+                        JSONObject().apply {
+                            put("action", "academicChatMedia")
+                            put("mediaType", attachment.mediaType)
+                            put("mimeType", attachment.mimeType)
+                            put("base64Data", attachment.base64Data)
+                            put(
+                                "question",
+                                trimmed.ifBlank {
+                                    "Please analyze and explain this ${attachment.mediaType} academically."
+                                }
+                            )
+                            put("standard", studentClass)
+                            put("board", studentBoard)
+                        }
+                    } else {
+                        val historyArray = JSONArray()
+                        val recent = currentHistory.takeLast(4)
+                        recent.forEach { msg ->
+                            val itemObj = JSONObject().apply {
+                                put("role", msg.role)
+                                put("text", msg.text)
+                            }
+                            historyArray.put(itemObj)
+                        }
+
+                        JSONObject().apply {
+                            put("action", "academicChat")
+                            put("question", trimmed)
+                            put("standard", studentClass)
+                            put("board", studentBoard)
+                            put("history", historyArray)
+                        }
+                    }
+
+                    conn.outputStream.bufferedWriter().use { writer ->
+                        writer.write(payload.toString())
+                    }
+
+                    val code = conn.responseCode
+                    if (code in 300..399) {
+                        val redirectLocation = conn.getHeaderField("Location")
+                        conn.disconnect()
+
+                        if (!redirectLocation.isNullOrBlank()) {
+                            val redirectConn = URL(redirectLocation).openConnection() as HttpURLConnection
+                            redirectConn.requestMethod = "GET"
+                            redirectConn.connectTimeout = timeoutMs
+                            redirectConn.readTimeout = timeoutMs
+                            redirectConn.instanceFollowRedirects = true
+                            try {
+                                val redirectCode = redirectConn.responseCode
+                                val stream = if (redirectCode in 200..299) redirectConn.inputStream else redirectConn.errorStream
+                                stream?.bufferedReader()?.use { it.readText() }
+                            } finally {
+                                redirectConn.disconnect()
+                            }
+                        } else {
+                            null
+                        }
+                    } else {
+                        val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                        val res = stream?.bufferedReader()?.use { it.readText() }
+                        conn.disconnect()
+                        res
+                    }
+                }
+
+                if (response != null) {
+                    val json = JSONObject(response)
+                    if (json.optBoolean("success", false)) {
+                        val answer = json.optString("answer", "No answer generated.")
+                        messages = messages + AiChatMessage(role = "model", text = answer)
+                    } else {
+                        val errorType = json.optString("error", "")
+                        val errorMsg = if (errorType == "ACADEMIC_ONLY") {
+                            json.optString("message", "I am Indium Academic Assistant. I can help only with academic questions for Standards 1–10. Please ask me something related to your studies.")
+                        } else {
+                            json.optString("error", "Sorry, I couldn't get an answer right now. Please try again.")
+                        }
+                        messages = messages + AiChatMessage(role = "model", text = errorMsg)
+                    }
+                } else {
+                    messages = messages + AiChatMessage(role = "model", text = "Sorry, unable to connect to AI Assistant server. Please try again.")
+                }
+            } catch (e: Exception) {
+                messages = messages + AiChatMessage(role = "model", text = "Connection error: ${e.localizedMessage ?: "Please try again."}")
+            } finally {
+                isThinking = false
+                coroutineScope.launch {
+                    if (messages.isNotEmpty()) {
+                        listState.animateScrollToItem(messages.size - 1)
+                    }
+                }
+            }
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            IndiumTopBar(title = "AI Academic Assistant", onBack = onBack)
+        },
+        containerColor = Color(0xFFF7F4FF)
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .imePadding()
+        ) {
+            // Student Context Sub-Header
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                color = Color(0xFF7C4DFF).copy(alpha = 0.1f),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                        .fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.School,
+                            contentDescription = null,
+                            tint = Color(0xFF7C4DFF),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "$studentClass • $studentBoard Board",
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF252238)
+                            )
+                        )
+                    }
+                    Surface(
+                        color = Color(0xFF4CAF50).copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Text(
+                            text = "ACADEMIC TUTOR",
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF2E7D32),
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Chat Messages / Quick Actions
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+            ) {
+                if (messages.isEmpty() && !isThinking) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState()),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Surface(
+                            color = Color(0xFF7C4DFF).copy(alpha = 0.1f),
+                            shape = CircleShape,
+                            modifier = Modifier.size(64.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.SmartToy,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(36.dp),
+                                    tint = Color(0xFF7C4DFF)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Hi ${CurrentUser.name.ifBlank { "there" }}! I'm your AI Academic Assistant.",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = Color(0xFF252238)
+                        )
+                        Text(
+                            text = "Ask me anything about your subjects, concepts, or homework for $studentClass.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                            textAlign = TextAlign.Center
+                        )
+
+                        Spacer(modifier = Modifier.height(20.dp))
+
+                        Text(
+                            text = "Quick Study Helpers",
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF673AB7)
+                            )
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            IndiumOutlinedButton(
+                                text = "📘 Explain Topic",
+                                onClick = { inputText = "Explain [topic] for $studentClass." },
+                                modifier = Modifier.weight(1f)
+                            )
+                            IndiumOutlinedButton(
+                                text = "🧮 Solve Problem",
+                                onClick = { inputText = "Solve this step by step: " },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            IndiumOutlinedButton(
+                                text = "📝 Practice Quiz",
+                                onClick = { inputText = "Give me 3 practice questions on [topic]." },
+                                modifier = Modifier.weight(1f)
+                            )
+                            IndiumOutlinedButton(
+                                text = "✅ Check Answer",
+                                onClick = { inputText = "Check my answer and explain mistakes: " },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        contentPadding = PaddingValues(vertical = 8.dp)
+                    ) {
+                        items(messages) { msg ->
+                            val isUser = msg.role == "user"
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+                            ) {
+                                Surface(
+                                    color = if (isUser) Color(0xFF7C4DFF) else Color.White,
+                                    shape = RoundedCornerShape(
+                                        topStart = 16.dp,
+                                        topEnd = 16.dp,
+                                        bottomStart = if (isUser) 16.dp else 4.dp,
+                                        bottomEnd = if (isUser) 4.dp else 16.dp
+                                    ),
+                                    modifier = Modifier.widthIn(max = 280.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text(
+                                            text = if (isUser) "You" else "🤖 INDium AI",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isUser) Color.White.copy(alpha = 0.8f) else Color(0xFF7C4DFF)
+                                            )
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = if (isUser) msg.text else formatAiResponse(msg.text),
+                                            style = MaterialTheme.typography.bodyMedium.copy(
+                                                color = if (isUser) Color.White else Color(0xFF252238),
+                                                lineHeight = 20.sp
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (isThinking) {
+                            item {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.Start
+                                ) {
+                                    Surface(
+                                        color = Color.White,
+                                        shape = RoundedCornerShape(16.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(16.dp),
+                                                color = Color(0xFF7C4DFF),
+                                                strokeWidth = 2.dp
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = "Thinking...",
+                                                style = MaterialTheme.typography.bodySmall.copy(
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.Gray
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Attachment Preview Bar
+            if (selectedAttachment != null) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    color = Color(0xFFF0E6FF),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color(0xFF7C4DFF).copy(alpha = 0.3f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                            if (selectedAttachment!!.previewBitmap != null) {
+                                Image(
+                                    bitmap = selectedAttachment!!.previewBitmap!!.asImageBitmap(),
+                                    contentDescription = "Attachment Preview",
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                            } else {
+                                Text(
+                                    text = if (selectedAttachment!!.mediaType == "pdf") "📄 " else "📷 ",
+                                    fontSize = 18.sp
+                                )
+                            }
+                            Text(
+                                text = selectedAttachment!!.displayName,
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                color = Color(0xFF252238),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        IconButton(
+                            onClick = { selectedAttachment = null },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Remove Attachment",
+                                tint = Color.Red,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Input Row
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                color = Color.White,
+                shape = RoundedCornerShape(24.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = { cameraLauncher.launch(null) },
+                        enabled = !isThinking
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PhotoCamera,
+                            contentDescription = "Camera",
+                            tint = Color(0xFF7C4DFF),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = { galleryLauncher.launch(arrayOf("image/jpeg", "image/png")) },
+                        enabled = !isThinking
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Image,
+                            contentDescription = "Photo Gallery",
+                            tint = Color(0xFF7C4DFF),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = { pdfLauncher.launch(arrayOf("application/pdf")) },
+                        enabled = !isThinking
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PictureAsPdf,
+                            contentDescription = "Ask from PDF",
+                            tint = Color(0xFF673AB7),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    OutlinedTextField(
+                        value = inputText,
+                        onValueChange = { inputText = it },
+                        placeholder = { Text("Ask an academic question...") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = false,
+                        maxLines = 3,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color.Transparent,
+                            unfocusedBorderColor = Color.Transparent,
+                            focusedTextColor = Color(0xFF252238),
+                            unfocusedTextColor = Color(0xFF252238)
+                        )
+                    )
+
+                    IconButton(
+                        onClick = { sendMessage(inputText) },
+                        enabled = (inputText.isNotBlank() || selectedAttachment != null) && !isThinking
+                    ) {
+                        Surface(
+                            color = if ((inputText.isNotBlank() || selectedAttachment != null) && !isThinking) Color(0xFF7C4DFF) else Color.LightGray,
+                            shape = CircleShape,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Send,
+                                    contentDescription = "Send",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+data class AppNotification(
+    val notificationId: String,
+    val type: String,
+    val title: String,
+    val message: String,
+    val createdAt: Long,
+    val targetRole: String,
+    val targetClass: String = "",
+    val referenceId: String = "",
+    val isImportant: Boolean = false,
+    val dateText: String = ""
+)
+
+@Composable
+fun NotificationCenterScreen(
+    userName: String,
+    notifications: List<AppNotification>,
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("global_notification_prefs", Context.MODE_PRIVATE) }
+    val readSet = remember(notifications) {
+        prefs.getStringSet("read_notification_ids_$userName", emptySet())?.toSet()
+            ?: emptySet()
+    }
+
+    BackHandler {
+        val updatedReadSet = prefs
+            .getStringSet("read_notification_ids_$userName", emptySet())
+            ?.toMutableSet()
+            ?: mutableSetOf()
+
+        notifications.forEach {
+            updatedReadSet.add(it.notificationId)
+        }
+
+        prefs.edit()
+            .putStringSet("read_notification_ids_$userName", updatedReadSet)
+            .apply()
+
+        onBack()
+    }
+
+    Scaffold(
+        topBar = {
+            IndiumTopBar(title = "Notifications", onBack = onBack)
+        },
+        containerColor = Color(0xFFF7F4FF)
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(16.dp)
+        ) {
+            if (notifications.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.NotificationsNone,
+                            contentDescription = null,
+                            modifier = Modifier.size(64.dp),
+                            tint = Color.LightGray
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "No notifications yet.",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = Color.Gray
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(notifications) { notification ->
+                        val isUnread = notification.notificationId !in readSet
+
+                        IndiumCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            containerColor = if (isUnread) Color(0xFFF0E6FF) else Color.White
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = when (notification.type) {
+                                                "NOTICE_APPROVED" -> "🟢 "
+                                                "NOTICE_REJECTED" -> "🔴 "
+                                                "NOTICE_PENDING" -> "🟠 "
+                                                else -> "📢 "
+                                            },
+                                            fontSize = 16.sp
+                                        )
+                                        Text(
+                                            text = notification.title,
+                                            style = MaterialTheme.typography.titleMedium.copy(
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF252238)
+                                            )
+                                        )
+                                    }
+                                    if (isUnread) {
+                                        Surface(
+                                            color = Color(0xFFF44336),
+                                            shape = CircleShape,
+                                            modifier = Modifier.size(10.dp)
+                                        ) {}
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = notification.message,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color(0xFF686477)
+                                )
+
+                                if (notification.dateText.isNotBlank()) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = notification.dateText,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color.Gray
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 fun DashboardScreen(
@@ -1171,6 +2035,261 @@ fun DashboardScreen(
     var dashboardSearchQuery by remember { mutableStateOf("") }
     var globalStudents by remember { mutableStateOf<List<SheetStudent>>(emptyList()) }
     var globalTeachers by remember { mutableStateOf<List<TeacherRecord>>(emptyList()) }
+
+    var showNotificationCenter by remember { mutableStateOf(false) }
+    var globalNotifications by remember { mutableStateOf<List<AppNotification>>(emptyList()) }
+    var notificationBadgeCount by remember { mutableStateOf(0) }
+
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("global_notification_prefs", Context.MODE_PRIVATE) }
+
+    LaunchedEffect(role, CurrentUser.name, showNotificationCenter, selectedScreen){
+        val userName = CurrentUser.name
+        val noticeApiUrl = "https://script.google.com/macros/s/AKfycbwUl2MQJGc8NEhIHN7i1epOB6TkzBfcIxAVxeH_hrt4AwFCTisA-SHjwR3MIHUeUEyheQ/exec"
+        val notificationsList = mutableListOf<AppNotification>()
+
+        try {
+            val isStudent = role.equals("Student", ignoreCase = true)
+            val isTeacher = role.equals("Teacher", ignoreCase = true)
+            val isAdmin = role.equals("Admin", ignoreCase = true)
+
+            // 1. Primary API Fetch (Admin: pending, Teacher: history/personal updates, Student: approved list)
+            val primaryUrlString = when {
+                isAdmin -> "$noticeApiUrl?action=pending"
+                isTeacher -> "$noticeApiUrl?action=history&postedBy=" + URLEncoder.encode(userName, "UTF-8")
+                else -> "$noticeApiUrl?action=list"
+            }
+            try {
+
+            val primaryResult = withContext(Dispatchers.IO) {
+                val conn = URL(primaryUrlString).openConnection() as HttpURLConnection
+                conn.requestMethod = "GET"
+                conn.connectTimeout = 15000
+                conn.readTimeout = 15000
+                conn.instanceFollowRedirects = true
+                try {
+                    if (conn.responseCode == 200) conn.inputStream.bufferedReader().use { it.readText() } else null
+                } finally {
+                    conn.disconnect()
+                }
+            }
+
+            if (primaryResult != null) {
+                val json = JSONObject(primaryResult)
+                if (json.optBoolean("success")) {
+                    val array = json.optJSONArray("notices") ?: JSONArray()
+                    val sdf = SimpleDateFormat("dd/MM/yyyy hh:mm a", Locale.ENGLISH)
+
+                    for (i in 0 until array.length()) {
+                        val obj = array.getJSONObject(i)
+                        val noticeId = obj.optString("noticeId")
+                        val title = obj.optString("title")
+                        val message = obj.optString("message")
+                        val audience = obj.optString("audience")
+                        val postedBy = obj.optString("postedBy")
+                        val dateStr = obj.optString("date")
+                        val status = obj.optString("status")
+
+                        val parsedTimestamp = try {
+                            sdf.parse(dateStr)?.time ?: System.currentTimeMillis()
+                        } catch (e: Exception) {
+                            System.currentTimeMillis()
+                        }
+
+                        if (isAdmin) {
+                            if (status.equals("Pending", ignoreCase = true)) {
+                                notificationsList.add(
+                                    AppNotification(
+                                        notificationId = noticeId,
+                                        type = "NOTICE_PENDING",
+                                        title = "New Notice for Approval",
+                                        message = "Teacher $postedBy submitted: $title",
+                                        createdAt = parsedTimestamp,
+                                        dateText = dateStr,
+                                        targetRole = "Admin",
+                                        referenceId = noticeId,
+                                        isImportant = true
+                                    )
+                                )
+                            }
+                        } else if (isTeacher) {
+                            if (status.equals("Approved", ignoreCase = true)) {
+                                notificationsList.add(
+                                    AppNotification(
+                                        notificationId = "${noticeId}_APPROVED",
+                                        type = "NOTICE_APPROVED",
+                                        title = "Notice Approved",
+                                        message = "Your notice '$title' has been approved.",
+                                        createdAt = parsedTimestamp,
+                                        dateText = dateStr,
+                                        targetRole = "Teacher",
+                                        referenceId = noticeId
+                                    )
+                                )
+                            } else if (status.equals("Rejected", ignoreCase = true)) {
+                                val remark = obj.optString("adminRemark")
+                                val extra = if (remark.isNotBlank()) "\nRemark: $remark" else ""
+                                notificationsList.add(
+                                    AppNotification(
+                                        notificationId = "${noticeId}_REJECTED",
+                                        type = "NOTICE_REJECTED",
+                                        title = "Notice Rejected",
+                                        message = "Your notice '$title' was rejected.$extra",
+                                        createdAt = parsedTimestamp,
+                                        dateText = dateStr,
+                                        targetRole = "Teacher",
+                                        referenceId = noticeId,
+                                        isImportant = true
+                                    )
+                                )
+                            }
+                        } else if (isStudent) {
+                            val matchesAudience = audience.equals("Students", ignoreCase = true) || audience.equals("All", ignoreCase = true)
+                            val isApproved = status.equals("Approved", ignoreCase = true) || obj.optBoolean("active", false)
+
+                            if (matchesAudience && isApproved && title.isNotBlank()) {
+                                notificationsList.add(
+                                    AppNotification(
+                                        notificationId = noticeId,
+                                        type = "NEW_NOTICE",
+                                        title = title,
+                                        message = message,
+                                        createdAt = parsedTimestamp,
+                                        dateText = dateStr,
+                                        targetRole = "Student",
+                                        referenceId = noticeId,
+                                        isImportant = true
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            }
+            catch (e: Exception) {
+                // Continue with the next notification source
+            }
+
+            // 2. Teacher Secondary API Fetch: action=list for general notices (Teachers/All)
+            if (isTeacher) {
+                try {
+                    val listResult = withContext(Dispatchers.IO) {
+                        val conn = URL("$noticeApiUrl?action=list").openConnection() as HttpURLConnection
+                        conn.requestMethod = "GET"
+                        conn.connectTimeout = 15000
+                        conn.readTimeout = 15000
+                        conn.instanceFollowRedirects = true
+                        try {
+                            if (conn.responseCode == 200) conn.inputStream.bufferedReader().use { it.readText() } else null
+                        } finally {
+                            conn.disconnect()
+                        }
+                    }
+
+                    if (listResult != null) {
+                        val json = JSONObject(listResult)
+                        if (json.optBoolean("success")) {
+                            val array = json.optJSONArray("notices") ?: JSONArray()
+                            val sdf = SimpleDateFormat("dd/MM/yyyy hh:mm a", Locale.ENGLISH)
+
+                            for (i in 0 until array.length()) {
+                                val obj = array.getJSONObject(i)
+                                val noticeId = obj.optString("noticeId")
+                                val title = obj.optString("title")
+                                val message = obj.optString("message")
+                                val audience = obj.optString("audience")
+                                val dateStr = obj.optString("date")
+                                val status = obj.optString("status")
+
+                                val matchesAudience = audience.equals("Teachers", ignoreCase = true) || audience.equals("All", ignoreCase = true)
+                                val isApproved = status.equals("Approved", ignoreCase = true) || obj.optBoolean("active", false)
+
+                                if (matchesAudience && isApproved && title.isNotBlank()) {
+                                    val parsedTimestamp = try {
+                                        sdf.parse(dateStr)?.time ?: System.currentTimeMillis()
+                                    } catch (e: Exception) {
+                                        System.currentTimeMillis()
+                                    }
+
+                                    notificationsList.add(
+                                        AppNotification(
+                                            notificationId = noticeId,
+                                            type = "NEW_NOTICE",
+                                            title = title,
+                                            message = message,
+                                            createdAt = parsedTimestamp,
+                                            dateText = dateStr,
+                                            targetRole = "Teacher",
+                                            referenceId = noticeId,
+                                            isImportant = true
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+            } catch (e: Exception) {
+                    // Continue with Firestore notification source
+                }
+            }
+
+            // 3. Firestore Notices Fetch for Direct Admin Notices (Students & Teachers)
+            if (isStudent || isTeacher) {
+                val db = FirebaseFirestore.getInstance()
+                val snapshot = withContext(Dispatchers.IO) {
+                    try {
+                        Tasks.await(
+                            db.collection("notices").orderBy("timestamp", Query.Direction.DESCENDING).get()
+                        )
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+
+                if (snapshot != null) {
+                    val displaySdf = SimpleDateFormat("dd/MM/yyyy hh:mm a", Locale.ENGLISH)
+                    for (doc in snapshot.documents) {
+                        val title = doc.getString("title") ?: ""
+                        val content = doc.getString("content") ?: ""
+                        val timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis()
+                        val dateText = displaySdf.format(Date(timestamp))
+
+                        if (title.isNotBlank()) {
+                            notificationsList.add(
+                                AppNotification(
+                                    notificationId = "firestore_notice_" + doc.id,
+                                    type = "NEW_NOTICE",
+                                    title = title,
+                                    message = content,
+                                    createdAt = timestamp,
+                                    dateText = dateText,
+                                    targetRole = role,
+                                    referenceId = doc.id,
+                                    isImportant = true
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Deduplicate notifications by notificationId or title+message
+            val deduplicatedList = notificationsList.distinctBy { it.notificationId.ifBlank { "${it.title}_${it.message}" } }
+            val sortedList = deduplicatedList.sortedByDescending { it.createdAt }
+
+            val readSet = prefs.getStringSet("read_notification_ids_$userName", emptySet()) ?: emptySet()
+            val unreadCount = sortedList.count { it.notificationId !in readSet }
+
+            withContext(Dispatchers.Main) {
+                globalNotifications = sortedList
+                notificationBadgeCount = unreadCount
+            }
+        } catch (e: Exception) {
+            // Keep app running safely
+        }
+    }
 
     LaunchedEffect(role) {
         if (role.equals("Admin", ignoreCase = true)) {
@@ -1275,6 +2394,18 @@ fun DashboardScreen(
         return
     }
 
+    if (showNotificationCenter) {
+        NotificationCenterScreen(
+            userName = CurrentUser.name,
+            notifications = globalNotifications,
+            onBack = {
+                showNotificationCenter = false
+                notificationBadgeCount = 0
+            }
+        )
+        return
+    }
+
     // --------------------------------------------------
     // SUB SCREEN
     // --------------------------------------------------
@@ -1368,7 +2499,6 @@ fun DashboardScreen(
             MenuItem("Study Material", Icons.Default.MenuBook),
             MenuItem("Attendance", Icons.Default.CheckCircle),
             MenuItem("Exams & Results", Icons.Default.Assignment),
-            MenuItem("Fees", Icons.Default.Payments),
             MenuItem("Notices", Icons.Default.Notifications)
         )
         "Teacher" -> listOf(
@@ -1405,8 +2535,23 @@ fun DashboardScreen(
             IndiumDashboardHeader(
                 userName = CurrentUser.name,
                 role = role,
-                onLogout = onLogout
+                onLogout = onLogout,
+                notificationCount = notificationBadgeCount,
+                onNotificationClick = {
+                    showNotificationCenter = true
+                }
             )
+        }
+
+        if (globalNotifications.isNotEmpty()) {
+            val topNotice = globalNotifications.first()
+            item(span = { GridItemSpan(2) }) {
+                TickerBanner(
+                    text = "${topNotice.title}: ${topNotice.message.take(80)}",
+                    onClick = { showNotificationCenter = true },
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+            }
         }
 
         if (role.equals("Admin", ignoreCase = true)) {
@@ -1782,6 +2927,12 @@ fun MenuScreen(
 // TIMETABLE
 // ======================================================
 
+object StudentTimetableCache {
+    var keyClass: String = ""
+    var keyBoard: String = ""
+    var data: Map<String, List<TodayLecture>> = emptyMap()
+}
+
 @Composable
 fun TimetableScreen(
     onBack: () -> Unit
@@ -1790,15 +2941,21 @@ fun TimetableScreen(
         onBack()
     }
 
-    var isLoading by remember { mutableStateOf(false) }
+    val studentClass = CurrentUser.className
+    val studentBoard = CurrentUser.board
+
+    val hasValidCache = StudentTimetableCache.keyClass == studentClass &&
+            StudentTimetableCache.keyBoard == studentBoard &&
+            StudentTimetableCache.data.isNotEmpty()
+
+    var isLoading by remember { mutableStateOf(!hasValidCache) }
     var errorMessage by remember { mutableStateOf("") }
     
     var timetableData by remember { 
-        mutableStateOf<Map<String, List<TodayLecture>>>(emptyMap()) 
+        mutableStateOf<Map<String, List<TodayLecture>>>(
+            if (hasValidCache) StudentTimetableCache.data else emptyMap()
+        ) 
     }
-
-    val studentClass = CurrentUser.className
-    val studentBoard = CurrentUser.board
     
     val scriptUrl = "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec"
 
@@ -1808,7 +2965,10 @@ fun TimetableScreen(
             return@LaunchedEffect
         }
         
-        isLoading = true
+        if (timetableData.isEmpty()) {
+            isLoading = true
+        }
+
         try {
             val encodedClass = URLEncoder.encode(studentClass, "UTF-8")
             val encodedBoard = URLEncoder.encode(studentBoard, "UTF-8")
@@ -1860,18 +3020,25 @@ fun TimetableScreen(
                             loadedData[day] = lecturesList
                         }
                     }
-                    timetableData = loadedData
-                    if (loadedData.isEmpty()) {
+                    if (loadedData.isNotEmpty()) {
+                        timetableData = loadedData
+                        StudentTimetableCache.keyClass = studentClass
+                        StudentTimetableCache.keyBoard = studentBoard
+                        StudentTimetableCache.data = loadedData
+                        errorMessage = ""
+                    } else if (timetableData.isEmpty()) {
                         errorMessage = "No timetable found for your class."
                     }
-                } else {
+                } else if (timetableData.isEmpty()) {
                     errorMessage = json.optString("error", "Failed to fetch timetable.")
                 }
-            } else {
+            } else if (timetableData.isEmpty()) {
                 errorMessage = "Timetable API not reachable."
             }
         } catch (e: Exception) {
-            errorMessage = "Connection error: ${e.localizedMessage}"
+            if (timetableData.isEmpty()) {
+                errorMessage = "Connection error: ${e.localizedMessage}"
+            }
         } finally {
             isLoading = false
         }
@@ -3044,11 +4211,11 @@ fun AttendanceScreen(
     var attendancePercentage by remember { mutableStateOf(0f) }
     var history by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
 
+    val studentName = CurrentUser.name
     val studentRollNo = CurrentUser.rollNo
     val studentClass = CurrentUser.className
-    val studentBoard = CurrentUser.board
-    
-    val scriptUrl = "https://script.google.com/macros/s/AKfycbwbBEeUDm0gY_mCuPUJC04sw-O1aWlTTGbyu-x4yhl-BOLbUIoHD4cqWuuS_pNKRSCi/exec"
+
+    val attendanceUrl = "https://script.google.com/macros/s/AKfycbx3vXqB5Vs6DToJp5ArnnbuIGIvBzGwcLJFFUWtDrlBrD7dqLcRj7u89xNrskwPjrgu/exec"
 
     LaunchedEffect(Unit) {
         if (studentRollNo.isBlank() || studentClass.isBlank()) {
@@ -3057,20 +4224,23 @@ fun AttendanceScreen(
         }
         
         isLoading = true
+        errorMessage = ""
+
         try {
             val encodedClass = URLEncoder.encode(studentClass, "UTF-8")
-            val encodedBoard = URLEncoder.encode(studentBoard, "UTF-8")
-            val urlString = "$scriptUrl?action=getStudentAttendance&rollNo=$studentRollNo&standard=$encodedClass&board=$encodedBoard"
-            
+            val encodedRollNo = URLEncoder.encode(studentRollNo, "UTF-8")
+            val urlString = "$attendanceUrl?action=getStudentAttendance&standard=$encodedClass&rollNo=$encodedRollNo"
+
             val result = withContext(Dispatchers.IO) {
                 val connection = URL(urlString).openConnection() as HttpURLConnection
                 connection.requestMethod = "GET"
-                connection.connectTimeout = 15000
-                connection.readTimeout = 15000
-                
+                connection.connectTimeout = 20000
+                connection.readTimeout = 20000
+                connection.instanceFollowRedirects = true
+
                 try {
                     val code = connection.responseCode
-                    if (code == 200) {
+                    if (code in 200..299) {
                         connection.inputStream.bufferedReader().use { it.readText() }
                     } else {
                         null
@@ -3083,17 +4253,42 @@ fun AttendanceScreen(
             if (result != null) {
                 val json = JSONObject(result)
                 if (json.optBoolean("success", false)) {
-                    workingDays = json.optInt("totalDays", 0)
-                    presentDays = json.optInt("presentDays", 0)
-                    attendancePercentage = json.optDouble("percentage", 0.0).toFloat()
-                    
-                    val historyArray = json.optJSONArray("history") ?: JSONArray()
+                    val attendanceArray = json.optJSONArray("attendance") ?: JSONArray()
                     val loadedHistory = mutableListOf<Pair<String, String>>()
-                    for (i in 0 until historyArray.length()) {
-                        val item = historyArray.getJSONObject(i)
-                        loadedHistory.add(item.optString("date") to item.optString("status"))
+                    var presentCount = 0
+
+                    for (i in 0 until attendanceArray.length()) {
+                        val recordObj = attendanceArray.getJSONObject(i)
+                        val dateStr = recordObj.optString("date", "")
+                        val status = recordObj.optString("status", "PRESENT").uppercase()
+
+                        val isPresent = status == "PRESENT" || status == "P"
+                        if (isPresent) {
+                            presentCount++
+                        }
+
+                        if (dateStr.isNotBlank()) {
+                            loadedHistory.add(dateStr to if (isPresent) "Present" else "Absent")
+                        }
                     }
-                    history = loadedHistory
+
+                    // Sort newest dates first
+                    val sortedHistory = loadedHistory.sortedByDescending { pair ->
+                        try {
+                            SimpleDateFormat("d MMMM yyyy", Locale.ENGLISH).parse(pair.first)?.time ?: 0L
+                        } catch (e: Exception) {
+                            0L
+                        }
+                    }
+
+                    workingDays = sortedHistory.size
+                    presentDays = presentCount
+                    attendancePercentage = if (workingDays > 0) (presentCount * 100f) / workingDays else 0f
+                    history = sortedHistory
+
+                    if (workingDays == 0) {
+                        errorMessage = "No attendance records found."
+                    }
                 } else {
                     errorMessage = json.optString("error", "Attendance data currently unavailable.")
                 }
@@ -3101,7 +4296,7 @@ fun AttendanceScreen(
                 errorMessage = "Unable to fetch attendance record."
             }
         } catch (e: Exception) {
-            errorMessage = "Connection error: ${e.localizedMessage}"
+            errorMessage = "Error loading attendance: ${e.localizedMessage}"
         } finally {
             isLoading = false
         }
@@ -5137,12 +6332,16 @@ data class SheetStudent(
 @Composable
 fun AttendanceHistoryScreen(
     selectedClass: String,
-    students: List<SheetStudent>,
+    allStudents: List<SheetStudent>,
     preferences: SharedPreferences,
     onBack: () -> Unit
 ) {
 
     val context = LocalContext.current
+    val classList = listOf("1st Standard", "2nd Standard", "3rd Standard", "4th Standard", "5th Standard", "6th Standard", "7th Standard", "8th Standard", "9th Standard", "10th Standard")
+
+    var historyClass by remember { mutableStateOf(selectedClass) }
+    var showHistoryClassMenu by remember { mutableStateOf(false) }
 
     var selectedHistoryDate by remember {
         mutableStateOf("")
@@ -5160,6 +6359,14 @@ fun AttendanceHistoryScreen(
         mutableStateOf("DATE")
     }
 
+    val students = remember(allStudents, historyClass) {
+        val standardNumber = historyClass.filter { it.isDigit() }
+        allStudents.filter { student ->
+            student.standard.filter { it.isDigit() } == standardNumber
+        }.sortedBy {
+            it.rollNo.filter { c -> c.isDigit() }.toIntOrNull() ?: 99
+        }
+    }
 
     // ---------------------------------------------
     // SAVED DATES
@@ -5168,7 +6375,7 @@ fun AttendanceHistoryScreen(
     val savedDates =
         preferences
             .getStringSet(
-                "attendance_dates_$selectedClass",
+                "attendance_dates_$historyClass",
                 emptySet()
             )
             ?.toList()
@@ -5266,7 +6473,7 @@ fun AttendanceHistoryScreen(
             students.map { student ->
 
                 val key =
-                    "$selectedClass-$selectedHistoryDate-${student.rollNo}-${student.studentName}"
+                    "$historyClass-$selectedHistoryDate-${student.rollNo}-${student.studentName}"
 
                 val present =
                     preferences.getBoolean(
@@ -5320,7 +6527,7 @@ fun AttendanceHistoryScreen(
             currentMonthDates.map { dateString ->
 
                 val key =
-                    "$selectedClass-$dateString-${selectedStudent.rollNo}-${selectedStudent.studentName}"
+                    "$historyClass-$dateString-${selectedStudent.rollNo}-${selectedStudent.studentName}"
 
                 val present =
                     preferences.getBoolean(
@@ -5383,6 +6590,61 @@ fun AttendanceHistoryScreen(
             fontSize = 28.sp,
             fontWeight = FontWeight.Bold
         )
+
+
+        Spacer(
+            modifier =
+                Modifier.height(15.dp)
+        )
+
+
+        // -----------------------------------------
+        // STANDARD SELECTOR
+        // -----------------------------------------
+
+        Text(
+            text = "Select Standard",
+            fontSize = 17.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(
+            modifier = Modifier.height(6.dp)
+        )
+
+        Box(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            OutlinedButton(
+                onClick = {
+                    showHistoryClassMenu = true
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(historyClass)
+            }
+
+            DropdownMenu(
+                expanded = showHistoryClassMenu,
+                onDismissRequest = {
+                    showHistoryClassMenu = false
+                }
+            ) {
+                classList.forEach { className ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(className)
+                        },
+                        onClick = {
+                            historyClass = className
+                            showHistoryClassMenu = false
+                            selectedHistoryDate = ""
+                            selectedStudentName = ""
+                        }
+                    )
+                }
+            }
+        }
 
 
         Spacer(
@@ -5929,6 +7191,10 @@ fun AttendanceHistoryScreen(
 }
 
 
+object StudentRosterCache {
+    var students: List<SheetStudent> = emptyList()
+}
+
 @Composable
 fun StudentAttendanceForTeacherScreen(
     onBack: () -> Unit
@@ -5943,29 +7209,47 @@ fun StudentAttendanceForTeacherScreen(
     var showDatePicker by remember { mutableStateOf(false) }
     var saveMessage by remember { mutableStateOf("") }
     var searchText by remember { mutableStateOf("") }
-    var sheetStudents by remember { mutableStateOf<List<SheetStudent>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(false) }
+    var allStudents by remember { mutableStateOf(StudentRosterCache.students) }
+    var isLoading by remember { mutableStateOf(StudentRosterCache.students.isEmpty()) }
     var loadError by remember { mutableStateOf("") }
     var showHistory by remember { mutableStateOf(false) }
 
     val preferences = remember { context.getSharedPreferences("student_attendance", Context.MODE_PRIVATE) }
     val attendance = remember { mutableStateMapOf<String, Boolean>() }
 
+    val sheetStudents = remember(allStudents, selectedClass) {
+        val standardNumber = selectedClass.filter { it.isDigit() }
+        allStudents.filter { student ->
+            student.standard.filter { it.isDigit() } == standardNumber
+        }.sortedBy {
+            it.rollNo.filter { c -> c.isDigit() }.toIntOrNull() ?: 99
+        }
+    }
+
+    LaunchedEffect(sheetStudents, selectedDate) {
+        attendance.clear()
+        sheetStudents.forEach { student ->
+            val key = "$selectedClass-$selectedDate-${student.rollNo}-${student.studentName}"
+            attendance[student.studentName] = preferences.getBoolean(key, true)
+        }
+    }
+
     if (showHistory) {
         AttendanceHistoryScreen(
             selectedClass = selectedClass,
-            students = sheetStudents,
+            allStudents = allStudents,
             preferences = preferences,
             onBack = { showHistory = false }
         )
         return
     }
 
-    LaunchedEffect(selectedClass) {
-        isLoading = true
+    LaunchedEffect(Unit) {
+        if (allStudents.isEmpty()) {
+            isLoading = true
+        }
         loadError = ""
         try {
-            val standardNumber = selectedClass.filter { it.isDigit() }
             val result = withContext(Dispatchers.IO) {
                 val connection = URL(scriptUrl).openConnection() as HttpURLConnection
                 connection.requestMethod = "GET"
@@ -5981,26 +7265,30 @@ fun StudentAttendanceForTeacherScreen(
                     for (i in 0 until studentsArray.length()) {
                         val student = studentsArray.getJSONObject(i)
                         val standard = student.optString("standard").trim()
-                        if (standard.filter { it.isDigit() } == standardNumber) {
-                            loadedStudents.add(SheetStudent(
-                                rollNo = student.optString("rollNo").trim(),
-                                studentName = student.optString("studentName").trim(),
-                                mobileNo = "", // Privacy: Do not fetch student mobile numbers for teachers
-                                standard = standard,
-                                board = student.optString("board").trim()
-                            ))
-                        }
+                        loadedStudents.add(SheetStudent(
+                            rollNo = student.optString("rollNo").trim(),
+                            studentName = student.optString("studentName").trim(),
+                            mobileNo = "", // Privacy: Do not fetch student mobile numbers for teachers
+                            standard = standard,
+                            board = student.optString("board").trim()
+                        ))
                     }
-                    sheetStudents = loadedStudents.sortedBy { it.rollNo.filter { c -> c.isDigit() }.toIntOrNull() ?: 99 }
-                    attendance.clear()
-                    sheetStudents.forEach { student ->
-                        val key = "$selectedClass-$selectedDate-${student.rollNo}-${student.studentName}"
-                        attendance[student.studentName] = preferences.getBoolean(key, true)
+                    allStudents = loadedStudents
+                    StudentRosterCache.students = loadedStudents
+                } else {
+                    if (allStudents.isEmpty()) {
+                        loadError = json.optString("error", "Failed to load student roster.")
                     }
+                }
+            } else {
+                if (allStudents.isEmpty()) {
+                    loadError = "Unable to connect to server."
                 }
             }
         } catch (e: Exception) {
-            loadError = "Error: ${e.message}"
+            if (allStudents.isEmpty()) {
+                loadError = "Error: ${e.message}"
+            }
         } finally {
             isLoading = false
         }
@@ -6074,17 +7362,89 @@ fun StudentAttendanceForTeacherScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            IndiumButton(text = "SAVE ATTENDANCE", onClick = {
-                val editor = preferences.edit()
-                sheetStudents.forEach { student ->
-                    val key = "$selectedClass-$selectedDate-${student.rollNo}-${student.studentName}"
-                    editor.putBoolean(key, attendance[student.studentName] ?: true)
-                }
-                val savedDates = preferences.getStringSet("attendance_dates_$selectedClass", emptySet())?.toMutableSet() ?: mutableSetOf()
-                savedDates.add(selectedDate)
-                editor.putStringSet("attendance_dates_$selectedClass", savedDates).apply()
-                saveMessage = "✅ Saved Successfully!"
-            }, containerColor = Color(0xFF673AB7))
+            var isSavingAttendance by remember { mutableStateOf(false) }
+            val scope = rememberCoroutineScope()
+            val attendanceUrl = "https://script.google.com/macros/s/AKfycbx3vXqB5Vs6DToJp5ArnnbuIGIvBzGwcLJFFUWtDrlBrD7dqLcRj7u89xNrskwPjrgu/exec"
+
+            IndiumButton(
+                text = if (isSavingAttendance) "SAVING..." else "SAVE ATTENDANCE",
+                onClick = {
+                    if (isSavingAttendance) return@IndiumButton
+
+                    // 1. Local SharedPreferences Save (Preserved 100%)
+                    val editor = preferences.edit()
+                    sheetStudents.forEach { student ->
+                        val key = "$selectedClass-$selectedDate-${student.rollNo}-${student.studentName}"
+                        editor.putBoolean(key, attendance[student.studentName] ?: true)
+                    }
+                    val savedDates = preferences.getStringSet("attendance_dates_$selectedClass", emptySet())?.toMutableSet() ?: mutableSetOf()
+                    savedDates.add(selectedDate)
+                    editor.putStringSet("attendance_dates_$selectedClass", savedDates).apply()
+
+                    // 2. Cloud Sync via Teacher Attendance Apps Script
+                    isSavingAttendance = true
+                    saveMessage = "⏳ Saving to cloud..."
+
+                    scope.launch {
+                        try {
+                            val response = withContext(Dispatchers.IO) {
+                                val connection = URL(attendanceUrl).openConnection() as HttpURLConnection
+                                connection.requestMethod = "POST"
+                                connection.doOutput = true
+                                connection.connectTimeout = 20000
+                                connection.readTimeout = 20000
+                                connection.instanceFollowRedirects = true
+                                connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+
+                                val recordsArray = JSONArray()
+                                sheetStudents.forEach { student ->
+                                    val isPresent = attendance[student.studentName] ?: true
+                                    val recordObj = JSONObject().apply {
+                                        put("date", selectedDate)
+                                        put("standard", selectedClass)
+                                        put("rollNo", student.rollNo)
+                                        put("studentName", student.studentName)
+                                        put("status", if (isPresent) "PRESENT" else "ABSENT")
+                                        put("markedBy", CurrentUser.name)
+                                    }
+                                    recordsArray.put(recordObj)
+                                }
+
+                                val payload = JSONObject().apply {
+                                    put("action", "saveStudentAttendance")
+                                    put("records", recordsArray)
+                                }
+
+                                connection.outputStream.bufferedWriter().use { writer ->
+                                    writer.write(payload.toString())
+                                }
+
+                                val responseCode = connection.responseCode
+                                val stream = if (responseCode in 200..299) connection.inputStream else connection.errorStream
+                                stream?.bufferedReader()?.use { it.readText() }
+                            }
+
+                            if (response != null) {
+                                val json = JSONObject(response)
+                                if (json.optBoolean("success", false)) {
+                                    saveMessage = "✅ Attendance saved successfully"
+                                } else {
+                                    val err = json.optString("error", "Cloud sync failed")
+                                    saveMessage = "⚠️ Saved locally, but cloud sync failed: $err"
+                                }
+                            } else {
+                                saveMessage = "⚠️ Saved locally, but cloud sync failed. Please try again."
+                            }
+                        } catch (e: Exception) {
+                            saveMessage = "⚠️ Saved locally, but cloud sync failed: ${e.localizedMessage}"
+                        } finally {
+                            isSavingAttendance = false
+                        }
+                    }
+                },
+                enabled = !isSavingAttendance,
+                containerColor = Color(0xFF673AB7)
+            )
             
             TextButton(onClick = { showHistory = true }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("VIEW HISTORY", color = Color(0xFF7C4DFF), fontWeight = FontWeight.Bold) }
             
@@ -6865,6 +8225,13 @@ fun ChangePasswordScreen(
     }
 }
 
+data class DateFetchResult(
+    val isLeaveApplied: Boolean,
+    val lectures: List<TodayLecture>,
+    val errorMessage: String
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TeacherTodayLecturesScreen(
     onBack: () -> Unit
@@ -6888,6 +8255,9 @@ fun TeacherTodayLecturesScreen(
     }
     var showDatePicker by remember { mutableStateOf(false) }
 
+    val dayOfWeekScheduleCache = remember { mutableStateMapOf<String, List<TodayLecture>>() }
+    val dateResultCache = remember { mutableStateMapOf<String, DateFetchResult>() }
+
     var loading by remember { mutableStateOf(true) }
     var refreshing by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf("") }
@@ -6898,12 +8268,27 @@ fun TeacherTodayLecturesScreen(
     val currentDateText = displayDateFormat.format(selectedCalendar.time)
 
     fun loadLecturesForDate(cal: Calendar, isRefresh: Boolean = false) {
-        if (isRefresh) refreshing = true else loading = true
+        val formattedDate = dateFormat.format(cal.time)
+        val dayName = dayNameFormat.format(cal.time)
+
+        if (!isRefresh && dateResultCache.containsKey(formattedDate)) {
+            val cached = dateResultCache[formattedDate]!!
+            isLeaveApplied = cached.isLeaveApplied
+            lectures = cached.lectures
+            errorMessage = cached.errorMessage
+            loading = false
+            return
+        }
+
+        if (isRefresh) {
+            refreshing = true
+            dateResultCache.remove(formattedDate)
+        } else {
+            loading = true
+        }
         errorMessage = ""
         isLeaveApplied = false
         lectures = emptyList()
-
-        val formattedDate = dateFormat.format(cal.time)
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -6946,65 +8331,89 @@ fun TeacherTodayLecturesScreen(
                                 originalTeacher = if (origTeacher.isNotBlank()) origTeacher else teacherName
                             ))
                         }
+                        if (resultList.isNotEmpty()) {
+                            dayOfWeekScheduleCache[dayName] = resultList
+                        }
+                        dateResultCache[formattedDate] = DateFetchResult(
+                            isLeaveApplied = false,
+                            lectures = resultList,
+                            errorMessage = ""
+                        )
                         withContext(Dispatchers.Main) {
                             lectures = resultList
+                            isLeaveApplied = false
                         }
                     } else {
                         val err = json.optString("error", "")
                         if (err.contains("Leave already applied", ignoreCase = true)) {
+                            var fallbackLectures = dayOfWeekScheduleCache[dayName] ?: emptyList()
+
+                            if (fallbackLectures.isEmpty()) {
+                                // Secondary fetch: retrieve scheduled lectures for this day of week
+                                for (weeksAhead in 1..2) {
+                                    val altCal = cal.clone() as Calendar
+                                    altCal.add(Calendar.DAY_OF_MONTH, 7 * weeksAhead)
+                                    val altDate = dateFormat.format(altCal.time)
+                                    val altEncodedDate = URLEncoder.encode(altDate, "UTF-8")
+                                    val altUrl = "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec?action=leaveLectures&teacherName=$encodedTeacher&date=$altEncodedDate"
+
+                                    val altResponse = withContext(Dispatchers.IO) {
+                                        val conn = URL(altUrl).openConnection() as HttpURLConnection
+                                        conn.connectTimeout = 15000
+                                        conn.readTimeout = 15000
+                                        conn.instanceFollowRedirects = true
+                                        try {
+                                            if (conn.responseCode == 200) conn.inputStream.bufferedReader().use { it.readText() } else null
+                                        } finally {
+                                            conn.disconnect()
+                                        }
+                                    }
+                                    if (altResponse != null) {
+                                        val altJson = JSONObject(altResponse)
+                                        if (altJson.optBoolean("success")) {
+                                            val altArr = altJson.optJSONArray("lectures") ?: JSONArray()
+                                            val altList = mutableListOf<TodayLecture>()
+                                            for (i in 0 until altArr.length()) {
+                                                val item = altArr.getJSONObject(i)
+                                                val origTeacher = item.optString("originalTeacher", "")
+                                                val adjTeacher = item.optString("adjustedTeacher", "")
+                                                val isAdjusted = item.optBoolean("adjusted", false) || adjTeacher.isNotBlank()
+                                                val displayTeacher = if (isAdjusted && adjTeacher.isNotBlank()) adjTeacher else item.optString("teacher", teacherName)
+
+                                                altList.add(TodayLecture(
+                                                    time = item.optString("time"),
+                                                    className = item.optString("className"),
+                                                    subject = item.optString("subject"),
+                                                    teacher = displayTeacher,
+                                                    adjusted = isAdjusted,
+                                                    originalTeacher = if (origTeacher.isNotBlank()) origTeacher else teacherName
+                                                ))
+                                            }
+                                            fallbackLectures = altList
+                                            if (altList.isNotEmpty()) {
+                                                dayOfWeekScheduleCache[dayName] = altList
+                                            }
+                                            break
+                                        }
+                                    }
+                                }
+                            }
+
+                            dateResultCache[formattedDate] = DateFetchResult(
+                                isLeaveApplied = true,
+                                lectures = fallbackLectures,
+                                errorMessage = ""
+                            )
                             withContext(Dispatchers.Main) {
                                 isLeaveApplied = true
-                            }
-                            // Secondary fetch: retrieve scheduled lectures for this day of week
-                            var fallbackLectures = emptyList<TodayLecture>()
-                            for (weeksAhead in 1..4) {
-                                val altCal = cal.clone() as Calendar
-                                altCal.add(Calendar.DAY_OF_MONTH, 7 * weeksAhead)
-                                val altDate = dateFormat.format(altCal.time)
-                                val altEncodedDate = URLEncoder.encode(altDate, "UTF-8")
-                                val altUrl = "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec?action=leaveLectures&teacherName=$encodedTeacher&date=$altEncodedDate"
-
-                                val altResponse = withContext(Dispatchers.IO) {
-                                    val conn = URL(altUrl).openConnection() as HttpURLConnection
-                                    conn.connectTimeout = 15000
-                                    conn.readTimeout = 15000
-                                    conn.instanceFollowRedirects = true
-                                    try {
-                                        if (conn.responseCode == 200) conn.inputStream.bufferedReader().use { it.readText() } else null
-                                    } finally {
-                                        conn.disconnect()
-                                    }
-                                }
-                                if (altResponse != null) {
-                                    val altJson = JSONObject(altResponse)
-                                    if (altJson.optBoolean("success")) {
-                                        val altArr = altJson.optJSONArray("lectures") ?: JSONArray()
-                                        val altList = mutableListOf<TodayLecture>()
-                                        for (i in 0 until altArr.length()) {
-                                            val item = altArr.getJSONObject(i)
-                                            val origTeacher = item.optString("originalTeacher", "")
-                                            val adjTeacher = item.optString("adjustedTeacher", "")
-                                            val isAdjusted = item.optBoolean("adjusted", false) || adjTeacher.isNotBlank()
-                                            val displayTeacher = if (isAdjusted && adjTeacher.isNotBlank()) adjTeacher else item.optString("teacher", teacherName)
-
-                                            altList.add(TodayLecture(
-                                                time = item.optString("time"),
-                                                className = item.optString("className"),
-                                                subject = item.optString("subject"),
-                                                teacher = displayTeacher,
-                                                adjusted = isAdjusted,
-                                                originalTeacher = if (origTeacher.isNotBlank()) origTeacher else teacherName
-                                            ))
-                                        }
-                                        fallbackLectures = altList
-                                        break
-                                    }
-                                }
-                            }
-                            withContext(Dispatchers.Main) {
                                 lectures = fallbackLectures
                             }
                         } else {
+                            dateResultCache[formattedDate] = DateFetchResult(
+                                isLeaveApplied = false,
+                                lectures = emptyList(),
+                                errorMessage = err
+                            )
                             withContext(Dispatchers.Main) {
                                 errorMessage = err
                             }
@@ -8805,6 +10214,7 @@ fun AdminTodayLecturesScreen(
                         ))
                     }
                     lectures = resultList
+                    errorMessage = ""
                 } else {
                     errorMessage = json.optString("error", "No lectures found for today.")
                 }
@@ -8845,7 +10255,7 @@ fun AdminTodayLecturesScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                if (errorMessage.isNotEmpty()) {
+                if (errorMessage.isNotEmpty() && lectures.isEmpty()) {
                     IndiumCard(modifier = Modifier.fillMaxWidth()) {
                         Text(text = errorMessage, modifier = Modifier.padding(16.dp), color = Color.Red, fontWeight = FontWeight.Bold)
                     }
