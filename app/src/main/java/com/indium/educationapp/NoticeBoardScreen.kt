@@ -239,7 +239,8 @@ fun NoticeBoardScreen(
                 "title" to title.trim(),
                 "content" to message.trim(),
                 "author" to userName,
-                "timestamp" to System.currentTimeMillis()
+                "timestamp" to System.currentTimeMillis(),
+                "audience" to audience
             )
             db.collection("notices").add(newNotice)
             statusMessage = "Notice published successfully!"

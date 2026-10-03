@@ -2261,8 +2261,15 @@ fun DashboardScreen(
                         val content = doc.getString("content") ?: ""
                         val timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis()
                         val dateText = displaySdf.format(Date(timestamp))
+                        val docAudience = doc.getString("audience") ?: "All"
 
-                        if (title.isNotBlank()) {
+                        val matchesAudience = if (isStudent) {
+                            docAudience.equals("Students", ignoreCase = true) || docAudience.equals("All", ignoreCase = true)
+                        } else if (isTeacher) {
+                            docAudience.equals("Teachers", ignoreCase = true) || docAudience.equals("All", ignoreCase = true)
+                        } else true
+
+                        if (title.isNotBlank() && matchesAudience) {
                             notificationsList.add(
                                 AppNotification(
                                     notificationId = "firestore_notice_" + doc.id,
