@@ -1889,26 +1889,32 @@ fun NotificationCenterScreen(
             ?: emptySet()
     }
 
-    BackHandler {
-        val updatedReadSet = prefs
-            .getStringSet("read_notification_ids_$userName", emptySet())
-            ?.toMutableSet()
-            ?: mutableSetOf()
+    val handleBack = {
+        if (notifications.isNotEmpty()) {
+            val updatedReadSet = prefs
+                .getStringSet("read_notification_ids_$userName", emptySet())
+                ?.toMutableSet()
+                ?: mutableSetOf()
 
-        notifications.forEach {
-            updatedReadSet.add(it.notificationId)
+            notifications.forEach {
+                updatedReadSet.add(it.notificationId)
+            }
+
+            prefs.edit()
+                .putStringSet("read_notification_ids_$userName", updatedReadSet)
+                .apply()
         }
-
-        prefs.edit()
-            .putStringSet("read_notification_ids_$userName", updatedReadSet)
-            .apply()
 
         onBack()
     }
 
+    BackHandler {
+        handleBack()
+    }
+
     Scaffold(
         topBar = {
-            IndiumTopBar(title = "Notifications", onBack = onBack)
+            IndiumTopBar(title = "Notifications", onBack = handleBack)
         },
         containerColor = Color(0xFFF7F4FF)
     ) { padding ->
@@ -2091,9 +2097,9 @@ fun DashboardScreen(
                         val status = obj.optString("status")
 
                         val parsedTimestamp = try {
-                            sdf.parse(dateStr)?.time ?: System.currentTimeMillis()
+                            sdf.parse(dateStr)?.time ?: 0L
                         } catch (e: Exception) {
-                            System.currentTimeMillis()
+                            0L
                         }
 
                         if (isAdmin) {
@@ -2207,9 +2213,9 @@ fun DashboardScreen(
 
                                 if (matchesAudience && isApproved && title.isNotBlank()) {
                                     val parsedTimestamp = try {
-                                        sdf.parse(dateStr)?.time ?: System.currentTimeMillis()
+                                        sdf.parse(dateStr)?.time ?: 0L
                                     } catch (e: Exception) {
-                                        System.currentTimeMillis()
+                                        0L
                                     }
 
                                     notificationsList.add(
@@ -2800,64 +2806,6 @@ fun DashboardScreen(
 
             item(span = { GridItemSpan(2) }) {
                 Spacer(modifier = Modifier.height(16.dp))
-            }
-
-            if (!role.equals("Admin", ignoreCase = true)) {
-                item(span = { GridItemSpan(2) }) {
-                    IndiumCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        containerColor = Color.White,
-                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Surface(
-                                        color = Color(0xFF7C4DFF).copy(alpha = 0.1f),
-                                        shape = CircleShape,
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = Icons.Default.Campaign,
-                                                contentDescription = null,
-                                                tint = Color(0xFF7C4DFF),
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Text(
-                                        text = "Latest Notice",
-                                        style = MaterialTheme.typography.titleMedium.copy(
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF252238)
-                                        )
-                                    )
-                                }
-                                Text(
-                                    text = "View All",
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        color = Color(0xFF7C4DFF),
-                                        fontWeight = FontWeight.Bold
-                                    ),
-                                    modifier = Modifier.clickable { selectedScreen = "Notices" }
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text(
-                                text = "Please check the Notices section regularly for important school announcements.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color(0xFF686477),
-                                lineHeight = 20.sp
-                            )
-                        }
-                    }
-                }
             }
         }
     }
