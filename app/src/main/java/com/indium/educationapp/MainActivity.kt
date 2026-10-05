@@ -7155,9 +7155,9 @@ fun StudentAttendanceForTeacherScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val scriptUrl = "https://script.google.com/macros/s/AKfycbx3vXqB5Vs6DToJp5ArnnbuIGIvBzGwcLJFFUWtDrlBrD7dqLcRj7u89xNrskwPjrgu/exec"
-    val classList = listOf("1st Standard", "2nd Standard", "3rd Standard", "4th Standard", "5th Standard", "6th Standard", "7th Standard", "8th Standard", "9th Standard", "10th Standard")
 
+    val scriptUrl = "https://script.google.com/macros/s/AKfycbwbBEeUDm0gY_mCuPUJC04sw-O1aWlTTGbyu-x4yhl-BOLbUIoHD4cqWuuS_pNKRSCi/exec"
+    val classList = listOf("1st Standard", "2nd Standard", "3rd Standard", "4th Standard", "5th Standard", "6th Standard", "7th Standard", "8th Standard", "9th Standard", "10th Standard")
     var selectedClass by remember { mutableStateOf("10th Standard") }
     var selectedDate by remember { mutableStateOf(SimpleDateFormat("d MMMM yyyy", Locale.ENGLISH).format(Date())) }
     var showClassMenu by remember { mutableStateOf(false) }
@@ -7167,6 +7167,7 @@ fun StudentAttendanceForTeacherScreen(
     var allStudents by remember { mutableStateOf(StudentRosterCache.students) }
     var isLoading by remember { mutableStateOf(StudentRosterCache.students.isEmpty()) }
     var loadError by remember { mutableStateOf("") }
+    var refreshTrigger by remember { mutableIntStateOf(0) }
     var showHistory by remember { mutableStateOf(false) }
 
     val preferences = remember { context.getSharedPreferences("student_attendance", Context.MODE_PRIVATE) }
@@ -7199,7 +7200,7 @@ fun StudentAttendanceForTeacherScreen(
         return
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(refreshTrigger) {
         if (allStudents.isEmpty()) {
             isLoading = true
         }
@@ -7251,7 +7252,25 @@ fun StudentAttendanceForTeacherScreen(
 
     Scaffold(
         topBar = {
-            IndiumTopBar(title = "Student Attendance", onBack = onBack)
+            IndiumTopBar(
+                title = "Student Attendance",
+                onBack = onBack,
+                actions = {
+                    IconButton(
+                        onClick = {
+                            if (!isLoading) {
+                                refreshTrigger++
+                            }
+                        },
+                        enabled = !isLoading
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Refresh"
+                        )
+                    }
+                }
+            )
         },
         containerColor = Color(0xFFF7F4FF)
     ) { padding ->
@@ -8624,7 +8643,6 @@ data class LeaveLecture(
     val subject: String,
     val originalTeacher: String
 )
-
 data class LeaveAdjustment(
     val time: String,
     val className: String,
@@ -9182,7 +9200,7 @@ fun TeacherLeaveHistoryScreen(
                                 }
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = "Submitted on: ${formatLeaveDisplayDate(record.submissionDate)}",
+                                    text = "Submitted on: ${record.submissionDate}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Color.Gray
                                 )
