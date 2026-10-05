@@ -6163,7 +6163,7 @@ fun TeacherAttendanceScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = record.date,
+                                            text = formatLeaveDateOnly(record.date),
                                             fontWeight = FontWeight.Bold,
                                             color = Color(0xFF252238)
                                         )
@@ -8625,12 +8625,66 @@ data class LeaveLecture(
     val originalTeacher: String
 )
 
+data class LeaveAdjustment(
+    val time: String,
+    val className: String,
+    val subject: String,
+    val originalTeacher: String,
+    val adjustedTeacher: String,
+    val status: String
+)
+
 data class LeaveHistoryRecord(
     val date: String,
     val submissionDate: String,
     val status: String,
-    val details: String
+    val details: String,
+    val adjustments: List<LeaveAdjustment> = emptyList()
 )
+fun formatLeaveDisplayDate(rawDate: String): String {
+    if (rawDate.isBlank()) return rawDate
+
+    val parts = rawDate.trim().split(" ")
+    val datePart = parts[0]
+
+    val timePart = if (parts.size > 1) {
+        " " + parts.drop(1).joinToString(" ")
+    } else {
+        ""
+    }
+
+    // Existing DD/MM/YYYY format — leave unchanged
+    if (datePart.contains("/")) {
+        return rawDate
+    }
+
+    // Convert MM-DD-YYYY to DD/MM/YYYY
+    if (datePart.contains("-")) {
+        val datePieces = datePart.split("-")
+
+        if (
+            datePieces.size == 3 &&
+            datePieces[0].length == 2 &&
+            datePieces[1].length == 2 &&
+            datePieces[2].length == 4
+        ) {
+            return "${datePieces[1]}/${datePieces[0]}/${datePieces[2]}$timePart"
+        }
+    }
+
+    // If the format is unknown, don't modify it
+    return rawDate
+}
+
+fun formatLeaveDateOnly(rawDate: String): String {
+    if (rawDate.isBlank()) return rawDate
+
+    return formatLeaveDisplayDate(rawDate)
+        .trim()
+        .split(" ")
+        .firstOrNull()
+        ?: rawDate
+}
 
 @Composable
 fun TeacherLeaveScreen(
@@ -8693,12 +8747,35 @@ fun TeacherLeaveScreen(
                     val result = mutableListOf<LeaveHistoryRecord>()
                     for (i in 0 until arr.length()) {
                         val obj = arr.getJSONObject(i)
-                        result.add(LeaveHistoryRecord(
-                            date = obj.optString("date"),
-                            submissionDate = obj.optString("appliedTime").ifBlank { obj.optString("submissionDate") },
-                            status = obj.optString("status"),
-                            details = obj.optString("teacher").ifBlank { obj.optString("details") }
-                        ))
+                        val adjustmentsArray = obj.optJSONArray("adjustments") ?: JSONArray()
+                        val adjustments = mutableListOf<LeaveAdjustment>()
+
+                        for (j in 0 until adjustmentsArray.length()) {
+                            val adjustment = adjustmentsArray.getJSONObject(j)
+
+                            adjustments.add(
+                                LeaveAdjustment(
+                                    time = adjustment.optString("time"),
+                                    className = adjustment.optString("className"),
+                                    subject = adjustment.optString("subject"),
+                                    originalTeacher = adjustment.optString("originalTeacher"),
+                                    adjustedTeacher = adjustment.optString("adjustedTeacher"),
+                                    status = adjustment.optString("status")
+                                )
+                            )
+                        }
+
+                        result.add(
+                            LeaveHistoryRecord(
+                                date = obj.optString("date"),
+                                submissionDate = obj.optString("appliedTime")
+                                    .ifBlank { obj.optString("submissionDate") },
+                                status = obj.optString("status"),
+                                details = obj.optString("teacher")
+                                    .ifBlank { obj.optString("details") },
+                                adjustments = adjustments
+                            )
+                        )
                     }
                     withContext(Dispatchers.Main) {
                         historyList = result.reversed()
@@ -9078,7 +9155,7 @@ fun TeacherLeaveHistoryScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = record.date,
+                                        text = formatLeaveDateOnly(record.date),
                                         fontWeight = FontWeight.Bold,
                                         color = Color(0xFF252238)
                                     )
@@ -9105,7 +9182,7 @@ fun TeacherLeaveHistoryScreen(
                                 }
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = "Submitted on: ${record.submissionDate}",
+                                    text = "Submitted on: ${formatLeaveDisplayDate(record.submissionDate)}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Color.Gray
                                 )
@@ -9703,6 +9780,7 @@ fun AdminTeacherProfileScreen(teacher: TeacherRecord, onBack: () -> Unit) {
     val context = LocalContext.current
     var attendanceList by remember { mutableStateOf<List<TeacherAttendanceRecord>>(emptyList()) }
     var leaveList by remember { mutableStateOf<List<LeaveHistoryRecord>>(emptyList()) }
+    var selectedLeaveRecord by remember { mutableStateOf<LeaveHistoryRecord?>(null) }
     var isLoadingAttendance by remember { mutableStateOf(false) }
     var isLoadingLeave by remember { mutableStateOf(false) }
     var attendanceError by remember { mutableStateOf("") }
@@ -9814,12 +9892,35 @@ fun AdminTeacherProfileScreen(teacher: TeacherRecord, onBack: () -> Unit) {
                     val recordsList = mutableListOf<LeaveHistoryRecord>()
                     for (i in 0 until arr.length()) {
                         val obj = arr.getJSONObject(i)
-                        recordsList.add(LeaveHistoryRecord(
-                            date = obj.optString("date"),
-                            submissionDate = obj.optString("appliedTime").ifBlank { obj.optString("submissionDate") },
-                            status = obj.optString("status"),
-                            details = obj.optString("teacher").ifBlank { obj.optString("details") }
-                        ))
+                        val adjustmentsArray = obj.optJSONArray("adjustments") ?: JSONArray()
+                        val adjustments = mutableListOf<LeaveAdjustment>()
+
+                        for (j in 0 until adjustmentsArray.length()) {
+                            val adjustment = adjustmentsArray.getJSONObject(j)
+
+                            adjustments.add(
+                                LeaveAdjustment(
+                                    time = adjustment.optString("time"),
+                                    className = adjustment.optString("className"),
+                                    subject = adjustment.optString("subject"),
+                                    originalTeacher = adjustment.optString("originalTeacher"),
+                                    adjustedTeacher = adjustment.optString("adjustedTeacher"),
+                                    status = adjustment.optString("status")
+                                )
+                            )
+                        }
+
+                        recordsList.add(
+                            LeaveHistoryRecord(
+                                date = obj.optString("date"),
+                                submissionDate = obj.optString("appliedTime")
+                                    .ifBlank { obj.optString("submissionDate") },
+                                status = obj.optString("status"),
+                                details = obj.optString("teacher")
+                                    .ifBlank { obj.optString("details") },
+                                adjustments = adjustments
+                            )
+                        )
                     }
                     leaveList = recordsList.reversed()
                 } else {
@@ -9942,13 +10043,18 @@ fun AdminTeacherProfileScreen(teacher: TeacherRecord, onBack: () -> Unit) {
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         colors = CardColors(containerColor = Color.White, contentColor = Color.Unspecified, disabledContainerColor = Color.Unspecified, disabledContentColor = Color.Unspecified)
                     ) {
-                        Column(modifier = Modifier.padding(12.dp).fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier
+                                .padding(12.dp)
+                                .fillMaxWidth()
+                                .clickable { selectedLeaveRecord = record }
+                        ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(text = record.date, fontWeight = FontWeight.Medium)
+                                Text(text = formatLeaveDateOnly(record.date),fontWeight = FontWeight.Medium)
                                 Surface(
                                     color = when(record.status.uppercase()) {
                                         "APPROVED" -> Color(0xFF4CAF50).copy(alpha = 0.1f)
@@ -9975,7 +10081,10 @@ fun AdminTeacherProfileScreen(teacher: TeacherRecord, onBack: () -> Unit) {
                                 Text(text = record.details, style = MaterialTheme.typography.bodySmall, color = Color.DarkGray)
                             }
                             Spacer(modifier = Modifier.height(4.dp))
-                            Text(text = "Applied on: ${record.submissionDate}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            Text(
+                                text = "Applied on: ${formatLeaveDisplayDate(formatLeaveDisplayDate(record.submissionDate))}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Gray)
                         }
                     }
                 }
@@ -9985,7 +10094,47 @@ fun AdminTeacherProfileScreen(teacher: TeacherRecord, onBack: () -> Unit) {
             IndiumOutlinedButton(text = "BACK TO DASHBOARD", onClick = onBack)
         }
     }
+    selectedLeaveRecord?.let { record ->
+        AlertDialog(
+            onDismissRequest = {
+                selectedLeaveRecord = null
+            },
+            title = {
+                Text("Substitute Details")
+            },
+            text = {
+                if (record.adjustments.isEmpty()) {
+                    Text("No substitute details available.")
+                } else {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        record.adjustments.forEach { adjustment ->
+                            Column {
+                                Text(
+                                    text = "${adjustment.time} • ${adjustment.className}",
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text("Subject: ${adjustment.subject}")
+                                Text("Substitute: ${adjustment.adjustedTeacher}")
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        selectedLeaveRecord = null
+                    }
+                ) {
+                    Text("CLOSE")
+                }
+            }
+        )
+    }
 }
+
 
 data class TeacherRecord(
     val name: String,
