@@ -7155,7 +7155,7 @@ fun StudentAttendanceForTeacherScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val scriptUrl = "https://script.google.com/macros/s/AKfycbwbBEeUDm0gY_mCuPUJC04sw-O1aWlTTGbyu-x4yhl-BOLbUIoHD4cqWuuS_pNKRSCi/exec"
+    val scriptUrl = "https://script.google.com/macros/s/AKfycbx3vXqB5Vs6DToJp5ArnnbuIGIvBzGwcLJFFUWtDrlBrD7dqLcRj7u89xNrskwPjrgu/exec"
     val classList = listOf("1st Standard", "2nd Standard", "3rd Standard", "4th Standard", "5th Standard", "6th Standard", "7th Standard", "8th Standard", "9th Standard", "10th Standard")
 
     var selectedClass by remember { mutableStateOf("10th Standard") }
@@ -9580,66 +9580,159 @@ fun StudentProfileScreen(student: SheetStudent, onBack: () -> Unit) {
         "July", "August", "September", "October", "November", "December"
     )
 
-    LaunchedEffect(selectedMonth, student.rollNo, student.standard, student.board) {
+    LaunchedEffect(selectedMonth, student.rollNo, student.standard) {
+
         if (student.rollNo.isBlank() || student.standard.isBlank()) {
             attendanceError = "Student profile mapping incomplete."
             return@LaunchedEffect
         }
+
         isLoadingAttendance = true
         attendanceError = ""
+
         try {
-            val encodedClass = URLEncoder.encode(student.standard, "UTF-8")
-            val encodedBoard = URLEncoder.encode(student.board, "UTF-8")
-            val urlString = "$scriptUrl?action=getStudentAttendance&rollNo=${student.rollNo}&standard=$encodedClass&board=$encodedBoard"
-            
+            val attendanceUrl =
+                "https://script.google.com/macros/s/AKfycbx3vXqB5Vs6DToJp5ArnnbuIGIvBzGwcLJFFUWtDrlBrD7dqLcRj7u89xNrskwPjrgu/exec"
+
+            val encodedClass =
+                URLEncoder.encode(student.standard, "UTF-8")
+
+            val encodedRollNo =
+                URLEncoder.encode(student.rollNo, "UTF-8")
+
+            val urlString =
+                "$attendanceUrl?action=getStudentAttendance" +
+                        "&standard=$encodedClass" +
+                        "&rollNo=$encodedRollNo"
+
             val result = withContext(Dispatchers.IO) {
-                val connection = URL(urlString).openConnection() as HttpURLConnection
+
+                val connection =
+                    URL(urlString).openConnection() as HttpURLConnection
+
                 connection.requestMethod = "GET"
-                connection.connectTimeout = 15000
-                connection.readTimeout = 15000
+                connection.connectTimeout = 20000
+                connection.readTimeout = 20000
+                connection.instanceFollowRedirects = true
+
                 try {
-                    if (connection.responseCode == 200) {
-                        connection.inputStream.bufferedReader().use { it.readText() }
-                    } else null
+                    val code = connection.responseCode
+
+                    if (code in 200..299) {
+                        connection.inputStream
+                            .bufferedReader()
+                            .use { it.readText() }
+                    } else {
+                        null
+                    }
+
                 } finally {
                     connection.disconnect()
                 }
             }
 
             if (result != null) {
+
                 val json = JSONObject(result)
+
                 if (json.optBoolean("success", false)) {
-                    val historyArray = json.optJSONArray("history") ?: JSONArray()
-                    val loadedHistory = mutableListOf<Pair<String, String>>()
-                    for (i in 0 until historyArray.length()) {
-                        val item = historyArray.getJSONObject(i)
-                        val dateStr = item.optString("date") // expected format "dd/MM/yyyy" or similar
-                        val status = item.optString("status")
-                        
-                        val parts = dateStr.split("/")
-                        if (parts.size >= 2) {
-                            val recordMonth = parts[1].toIntOrNull()
-                            if (recordMonth == selectedMonth) {
-                                loadedHistory.add(dateStr to status)
+
+                    val attendanceArray =
+                        json.optJSONArray("attendance")
+                            ?: JSONArray()
+
+                    val loadedHistory =
+                        mutableListOf<Pair<String, String>>()
+
+                    for (i in 0 until attendanceArray.length()) {
+
+                        val recordObj =
+                            attendanceArray.getJSONObject(i)
+
+                        val dateStr =
+                            recordObj.optString("date", "")
+
+                        val status =
+                            recordObj
+                                .optString("status", "PRESENT")
+                                .uppercase()
+
+                        if (dateStr.isBlank()) {
+                            continue
+                        }
+
+                        val recordMonth = try {
+
+                            SimpleDateFormat(
+                                "d MMMM yyyy",
+                                Locale.ENGLISH
+                            ).parse(dateStr)?.let { parsedDate ->
+
+                                Calendar.getInstance().apply {
+                                    time = parsedDate
+                                }.get(Calendar.MONTH) + 1
                             }
-                        } else {
-                            loadedHistory.add(dateStr to status)
+
+                        } catch (e: Exception) {
+                            null
+                        }
+
+                        if (recordMonth == selectedMonth) {
+
+                            val displayStatus =
+                                if (
+                                    status == "PRESENT" ||
+                                    status == "P"
+                                ) {
+                                    "Present"
+                                } else {
+                                    "Absent"
+                                }
+
+                            loadedHistory.add(
+                                dateStr to displayStatus
+                            )
                         }
                     }
-                    attendanceList = loadedHistory
+
+                    attendanceList =
+                        loadedHistory.sortedByDescending { pair ->
+
+                            try {
+                                SimpleDateFormat(
+                                    "d MMMM yyyy",
+                                    Locale.ENGLISH
+                                ).parse(pair.first)?.time ?: 0L
+                            } catch (e: Exception) {
+                                0L
+                            }
+                        }
+
                 } else {
-                    attendanceError = json.optString("error", "No attendance records available.")
+
+                    attendanceError =
+                        json.optString(
+                            "error",
+                            "Attendance data currently unavailable."
+                        )
                 }
+
             } else {
-                attendanceError = "Unable to load attendance server records."
+
+                attendanceError =
+                    "Unable to fetch attendance record."
             }
+
         } catch (e: Exception) {
-            attendanceError = "Error loading attendance history: ${e.message}"
+
+            attendanceError =
+                "Error loading attendance: ${e.localizedMessage}"
+
         } finally {
+
             isLoadingAttendance = false
         }
     }
-
     Scaffold(
         topBar = { IndiumTopBar(title = "Student Profile", onBack = onBack) },
         containerColor = Color(0xFFF7F4FF)
