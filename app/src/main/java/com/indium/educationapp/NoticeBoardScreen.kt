@@ -45,7 +45,9 @@ fun NoticeBoardScreen(
     userName: String,
     onBack: () -> Unit,
     onNoticeHistoryStateChange: (Boolean) -> Unit = {}
-) {
+) {    BackHandler {
+    onBack()
+}
     var pendingNotices by remember { mutableStateOf<List<PendingNotice>>(emptyList()) }
     var loadingPending by remember { mutableStateOf(false) }
     var pendingError by remember { mutableStateOf("") }

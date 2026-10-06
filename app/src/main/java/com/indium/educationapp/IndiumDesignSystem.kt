@@ -198,10 +198,11 @@ fun IndiumDashboardHeader(
     role: String,
     onLogout: () -> Unit,
     notificationCount: Int = 0,
-    onNotificationClick: (() -> Unit)? = null
+    onNotificationClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
 ) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(bottom = 12.dp)
     ) {
