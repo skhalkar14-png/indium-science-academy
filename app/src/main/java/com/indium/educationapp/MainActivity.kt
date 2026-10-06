@@ -48,13 +48,26 @@ import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
@@ -65,6 +78,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.FirebaseApp
 import com.google.firebase.firestore.FirebaseFirestore
@@ -84,10 +99,9 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 
-
-
 const val HOMEWORK_UPLOAD_URL =
     "https://script.google.com/macros/s/AKfycby3N77ze3UYA0zkG7i6h1aLpE4NyEcjTvzmzbAnnEWoU01QTaocuEP_kWxUPHWNJ-7i8A/exec"
+
 object CurrentUser {
     var teacherName: String = ""
     var mobile: String = ""
@@ -1111,13 +1125,13 @@ fun SignupScreen(
         }
     }
 }
+
 @Composable
 fun RoleButton(
     role: String,
     selectedRole: String,
     onRoleSelected: (String) -> Unit
-)
-{
+) {
     Button(
         onClick = {
             onRoleSelected(role)
@@ -1246,7 +1260,8 @@ fun AiAssistantScreen(
 
     val studentClass = CurrentUser.className.ifBlank { "10th Standard" }
     val studentBoard = CurrentUser.board.ifBlank { "CBSE" }
-    val aiScriptUrl = "https://script.google.com/macros/s/AKfycbznyefkzH06AQbqSm-8AYQaSxr-xnHfJWFXmCDU7-xQapPBF7fYeE9wNrl8vJ9ULnUK/exec"
+    val aiScriptUrl =
+        "https://script.google.com/macros/s/AKfycbznyefkzH06AQbqSm-8AYQaSxr-xnHfJWFXmCDU7-xQapPBF7fYeE9wNrl8vJ9ULnUK/exec"
 
     val pdfLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -1258,13 +1273,21 @@ fun AiAssistantScreen(
                     val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                     if (bytes == null || bytes.isEmpty()) {
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "Could not read selected PDF file.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(
+                                context,
+                                "Could not read selected PDF file.",
+                                Toast.LENGTH_SHORT
+                            ).show()
                         }
                         return@launch
                     }
                     if (bytes.size > 2 * 1024 * 1024) { // 2 MB limit
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "PDF size exceeds 2MB limit. Please select a smaller PDF.", Toast.LENGTH_LONG).show()
+                            Toast.makeText(
+                                context,
+                                "PDF size exceeds 2MB limit. Please select a smaller PDF.",
+                                Toast.LENGTH_LONG
+                            ).show()
                         }
                         return@launch
                     }
@@ -1279,7 +1302,11 @@ fun AiAssistantScreen(
                     }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(context, "Error reading PDF: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            context,
+                            "Error reading PDF: ${e.localizedMessage}",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
                 }
             }
@@ -1299,7 +1326,11 @@ fun AiAssistantScreen(
 
                     if (originalBitmap == null) {
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "Could not load selected image.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(
+                                context,
+                                "Could not load selected image.",
+                                Toast.LENGTH_SHORT
+                            ).show()
                         }
                         return@launch
                     }
@@ -1321,7 +1352,11 @@ fun AiAssistantScreen(
                     }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(context, "Error loading image: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            context,
+                            "Error loading image: ${e.localizedMessage}",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
                 }
             }
@@ -1351,7 +1386,11 @@ fun AiAssistantScreen(
                     }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(context, "Error processing photo: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            context,
+                            "Error processing photo: ${e.localizedMessage}",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
                 }
             }
@@ -1436,14 +1475,16 @@ fun AiAssistantScreen(
                         conn.disconnect()
 
                         if (!redirectLocation.isNullOrBlank()) {
-                            val redirectConn = URL(redirectLocation).openConnection() as HttpURLConnection
+                            val redirectConn =
+                                URL(redirectLocation).openConnection() as HttpURLConnection
                             redirectConn.requestMethod = "GET"
                             redirectConn.connectTimeout = timeoutMs
                             redirectConn.readTimeout = timeoutMs
                             redirectConn.instanceFollowRedirects = true
                             try {
                                 val redirectCode = redirectConn.responseCode
-                                val stream = if (redirectCode in 200..299) redirectConn.inputStream else redirectConn.errorStream
+                                val stream =
+                                    if (redirectCode in 200..299) redirectConn.inputStream else redirectConn.errorStream
                                 stream?.bufferedReader()?.use { it.readText() }
                             } finally {
                                 redirectConn.disconnect()
@@ -1467,17 +1508,29 @@ fun AiAssistantScreen(
                     } else {
                         val errorType = json.optString("error", "")
                         val errorMsg = if (errorType == "ACADEMIC_ONLY") {
-                            json.optString("message", "I am Indium Academic Assistant. I can help only with academic questions for Standards 1–10. Please ask me something related to your studies.")
+                            json.optString(
+                                "message",
+                                "I am Indium Academic Assistant. I can help only with academic questions for Standards 1–10. Please ask me something related to your studies."
+                            )
                         } else {
-                            json.optString("error", "Sorry, I couldn't get an answer right now. Please try again.")
+                            json.optString(
+                                "error",
+                                "Sorry, I couldn't get an answer right now. Please try again."
+                            )
                         }
                         messages = messages + AiChatMessage(role = "model", text = errorMsg)
                     }
                 } else {
-                    messages = messages + AiChatMessage(role = "model", text = "Sorry, unable to connect to AI Assistant server. Please try again.")
+                    messages = messages + AiChatMessage(
+                        role = "model",
+                        text = "Sorry, unable to connect to AI Assistant server. Please try again."
+                    )
                 }
             } catch (e: Exception) {
-                messages = messages + AiChatMessage(role = "model", text = "Connection error: ${e.localizedMessage ?: "Please try again."}")
+                messages = messages + AiChatMessage(
+                    role = "model",
+                    text = "Connection error: ${e.localizedMessage ?: "Please try again."}"
+                )
             } finally {
                 isThinking = false
                 coroutineScope.launch {
@@ -1625,7 +1678,9 @@ fun AiAssistantScreen(
                         ) {
                             IndiumOutlinedButton(
                                 text = "📝 Practice Quiz",
-                                onClick = { inputText = "Give me 3 practice questions on [topic]." },
+                                onClick = {
+                                    inputText = "Give me 3 practice questions on [topic]."
+                                },
                                 modifier = Modifier.weight(1f)
                             )
                             IndiumOutlinedButton(
@@ -1663,14 +1718,18 @@ fun AiAssistantScreen(
                                             text = if (isUser) "You" else "🤖 INDium AI",
                                             style = MaterialTheme.typography.labelSmall.copy(
                                                 fontWeight = FontWeight.Bold,
-                                                color = if (isUser) Color.White.copy(alpha = 0.8f) else Color(0xFF7C4DFF)
+                                                color = if (isUser) Color.White.copy(alpha = 0.8f) else Color(
+                                                    0xFF7C4DFF
+                                                )
                                             )
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
                                             text = if (isUser) msg.text else formatAiResponse(msg.text),
                                             style = MaterialTheme.typography.bodyMedium.copy(
-                                                color = if (isUser) Color.White else Color(0xFF252238),
+                                                color = if (isUser) Color.White else Color(
+                                                    0xFF252238
+                                                ),
                                                 lineHeight = 20.sp
                                             )
                                         )
@@ -1690,7 +1749,10 @@ fun AiAssistantScreen(
                                         shape = RoundedCornerShape(16.dp)
                                     ) {
                                         Row(
-                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                            modifier = Modifier.padding(
+                                                horizontal = 14.dp,
+                                                vertical = 10.dp
+                                            ),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             CircularProgressIndicator(
@@ -1734,7 +1796,10 @@ fun AiAssistantScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
                             if (selectedAttachment!!.previewBitmap != null) {
                                 Image(
                                     bitmap = selectedAttachment!!.previewBitmap!!.asImageBitmap(),
@@ -1843,7 +1908,9 @@ fun AiAssistantScreen(
                         enabled = (inputText.isNotBlank() || selectedAttachment != null) && !isThinking
                     ) {
                         Surface(
-                            color = if ((inputText.isNotBlank() || selectedAttachment != null) && !isThinking) Color(0xFF7C4DFF) else Color.LightGray,
+                            color = if ((inputText.isNotBlank() || selectedAttachment != null) && !isThinking) Color(
+                                0xFF7C4DFF
+                            ) else Color.LightGray,
                             shape = CircleShape,
                             modifier = Modifier.size(36.dp)
                         ) {
@@ -1883,7 +1950,8 @@ fun NotificationCenterScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("global_notification_prefs", Context.MODE_PRIVATE) }
+    val prefs =
+        remember { context.getSharedPreferences("global_notification_prefs", Context.MODE_PRIVATE) }
     val readSet = remember(notifications) {
         prefs.getStringSet("read_notification_ids_$userName", emptySet())?.toSet()
             ?: emptySet()
@@ -1959,7 +2027,10 @@ fun NotificationCenterScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
                                         Text(
                                             text = when (notification.type) {
                                                 "NOTICE_APPROVED" -> "🟢 "
@@ -2010,11 +2081,250 @@ fun NotificationCenterScreen(
     }
 }
 
+data class ArrowTourStep(
+    val targetKey: String,
+    val title: String,
+    val description: String
+)
+
+val teacherTourSteps = listOf(
+    ArrowTourStep("My Lectures", "My Lectures", "View your scheduled lectures and teaching assignments."),
+    ArrowTourStep("Student Attendance", "Student Attendance", "Take attendance and manage attendance for your students."),
+    ArrowTourStep("Apply Leave", "Apply Leave", "Submit your leave request and adjust your lectures when required."),
+    ArrowTourStep("Leave History", "Leave History", "Track your previous leave requests and their status."),
+    ArrowTourStep("Homework", "Homework", "Manage and view homework for your students."),
+    ArrowTourStep("Exams & Marks", "Exams & Marks", "Enter and manage student examination marks."),
+    ArrowTourStep("Notices", "Notices", "View important academy notices and announcements."),
+    ArrowTourStep("Notifications", "Notifications", "Stay updated with important messages and notifications.")
+)
+
+val adminTourSteps = listOf(
+    ArrowTourStep("Search", "Search", "Quickly find students and teachers."),
+    ArrowTourStep("Student Profile", "Student Profile", "View student information and attendance details."),
+    ArrowTourStep("Teacher Information", "Teacher Information", "View teacher information and records."),
+    ArrowTourStep("Attendance", "Attendance", "Monitor student attendance records."),
+    ArrowTourStep("Weekly Timetable", "Weekly Timetable", "View the academy's weekly teaching schedule."),
+    ArrowTourStep("Leave Management", "Leave Management", "Review teacher leave requests and substitute arrangements."),
+    ArrowTourStep("Exams & Marks", "Exams & Results", "Manage examination information and marks."),
+    ArrowTourStep("Notice Management", "Notice Management", "Create, approve and manage important notices."),
+    ArrowTourStep("Notifications", "Notifications", "Stay informed about important updates.")
+)
+
+@Composable
+fun AppTourArrowOverlay(
+    tourSteps: List<ArrowTourStep>,
+    targetBoundsMap: Map<String, Rect>,
+    onDismiss: () -> Unit
+) {
+    var currentStepIndex by remember { mutableStateOf(0) }
+    val currentStep = tourSteps[currentStepIndex]
+    val totalSteps = tourSteps.size
+
+    val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+    val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
+
+    val rawBounds = targetBoundsMap[currentStep.targetKey]
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = false
+        )
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Transparent)
+        ) {
+            // Highlight target card border without dimming dashboard
+            if (rawBounds != null) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val pad = with(density) { 4.dp.toPx() }
+                    val left = (rawBounds.left - pad).coerceAtLeast(0f)
+                    val top = (rawBounds.top - pad).coerceAtLeast(0f)
+                    val right = (rawBounds.right + pad).coerceAtMost(size.width)
+                    val bottom = (rawBounds.bottom + pad).coerceAtMost(size.height)
+                    val topLeft = Offset(left, top)
+                    val borderSize = Size((right - left).coerceAtLeast(1f), (bottom - top).coerceAtLeast(1f))
+                    val crPx = with(density) { 14.dp.toPx() }
+
+                    drawRoundRect(
+                        color = Color(0xFF7C4DFF),
+                        topLeft = topLeft,
+                        size = borderSize,
+                        cornerRadius = CornerRadius(crPx, crPx),
+                        style = Stroke(width = with(density) { 3.dp.toPx() })
+                    )
+                }
+            }
+
+            val isTopHalf = if (rawBounds != null) (rawBounds.center.y < screenHeightPx / 2f) else true
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                contentAlignment = if (rawBounds == null) {
+                    Alignment.Center
+                } else if (isTopHalf) {
+                    Alignment.BottomCenter
+                } else {
+                    Alignment.TopCenter
+                }
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 16.dp)
+                ) {
+                    if (rawBounds != null && !isTopHalf) {
+                        // Arrow pointing DOWN toward target feature at bottom
+                        Canvas(modifier = Modifier.size(24.dp, 12.dp)) {
+                            val path = Path().apply {
+                                moveTo(0f, 0f)
+                                lineTo(size.width, 0f)
+                                lineTo(size.width / 2f, size.height)
+                                close()
+                            }
+                            drawPath(path = path, color = Color.White)
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = Color.White,
+                        tonalElevation = 12.dp,
+                        shadowElevation = 16.dp,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            // Header step counter & Skip button
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    color = Color(0xFF7C4DFF).copy(alpha = 0.12f),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        text = "${currentStepIndex + 1} of $totalSteps",
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                        style = MaterialTheme.typography.labelMedium.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF7C4DFF)
+                                        )
+                                    )
+                                }
+
+                                if (currentStepIndex < totalSteps - 1) {
+                                    Text(
+                                        text = "SKIP TOUR",
+                                        style = MaterialTheme.typography.labelMedium.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.Gray
+                                        ),
+                                        modifier = Modifier.clickable { onDismiss() }
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            // Title
+                            Text(
+                                text = currentStep.title,
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF252238)
+                                )
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Description
+                            Text(
+                                text = currentStep.description,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    color = Color(0xFF686477),
+                                    lineHeight = 20.sp
+                                ),
+                                textAlign = TextAlign.Center
+                            )
+
+                            Spacer(modifier = Modifier.height(20.dp))
+
+                            // Navigation Buttons
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (currentStepIndex > 0) {
+                                    OutlinedButton(
+                                        onClick = { currentStepIndex-- },
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Text("BACK", fontWeight = FontWeight.Bold)
+                                    }
+                                } else {
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                }
+
+                                Button(
+                                    onClick = {
+                                        if (currentStepIndex < totalSteps - 1) {
+                                            currentStepIndex++
+                                        } else {
+                                            onDismiss()
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF7C4DFF)
+                                    ),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text(
+                                        text = if (currentStepIndex == totalSteps - 1) "FINISH" else "NEXT",
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (rawBounds != null && isTopHalf) {
+                        // Arrow pointing UP toward target feature at top
+                        Canvas(modifier = Modifier.size(24.dp, 12.dp)) {
+                            val path = Path().apply {
+                                moveTo(size.width / 2f, 0f)
+                                lineTo(size.width, size.height)
+                                lineTo(0f, size.height)
+                                close()
+                            }
+                            drawPath(path = path, color = Color.White)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun DashboardScreen(
     role: String,
     onLogout: () -> Unit
 ) {
+    val targetBoundsMap = remember { mutableStateMapOf<String, Rect>() }
 
     var selectedScreen by remember {
         mutableStateOf<String?>(null)
@@ -2032,6 +2342,53 @@ fun DashboardScreen(
         mutableStateOf(false)
     }
 
+    val context = LocalContext.current
+
+    // Teacher Tour
+    val isTeacherRole = role.equals("Teacher", ignoreCase = true)
+    val tourPrefs = remember { context.getSharedPreferences("teacher_tour_prefs", Context.MODE_PRIVATE) }
+    var showTeacherTour by remember {
+        mutableStateOf(
+            isTeacherRole && !tourPrefs.getBoolean("teacher_app_tour_completed", false)
+        )
+    }
+
+    fun completeTeacherTour() {
+        tourPrefs.edit().putBoolean("teacher_app_tour_completed", true).apply()
+        showTeacherTour = false
+    }
+
+    if (showTeacherTour) {
+        AppTourArrowOverlay(
+            tourSteps = teacherTourSteps,
+            targetBoundsMap = targetBoundsMap,
+            onDismiss = { completeTeacherTour() }
+        )
+    }
+
+    // Admin Tour
+    val isAdminRole = role.equals("Admin", ignoreCase = true)
+    val adminTourPrefs = remember { context.getSharedPreferences("admin_tour_prefs", Context.MODE_PRIVATE) }
+    var showAdminTour by remember {
+        mutableStateOf(
+            isAdminRole && !adminTourPrefs.getBoolean("admin_app_tour_completed", false)
+        )
+    }
+
+    fun completeAdminTour() {
+        adminTourPrefs.edit().putBoolean("admin_app_tour_completed", true).apply()
+        showAdminTour = false
+    }
+
+    if (showAdminTour) {
+        AppTourArrowOverlay(
+            tourSteps = adminTourSteps,
+            targetBoundsMap = targetBoundsMap,
+            onDismiss = { completeAdminTour() }
+        )
+    }
+
+
     var isTeacherHistoryOpen by remember { mutableStateOf(false) }
     var isNoticeHistoryOpen by remember { mutableStateOf(false) }
 
@@ -2045,13 +2402,13 @@ fun DashboardScreen(
     var showNotificationCenter by remember { mutableStateOf(false) }
     var globalNotifications by remember { mutableStateOf<List<AppNotification>>(emptyList()) }
     var notificationBadgeCount by remember { mutableStateOf(0) }
+    val prefs =
+        remember { context.getSharedPreferences("global_notification_prefs", Context.MODE_PRIVATE) }
 
-    val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("global_notification_prefs", Context.MODE_PRIVATE) }
-
-    LaunchedEffect(role, CurrentUser.name, showNotificationCenter, selectedScreen){
+    LaunchedEffect(role, CurrentUser.name, showNotificationCenter, selectedScreen) {
         val userName = CurrentUser.name
-        val noticeApiUrl = "https://script.google.com/macros/s/AKfycbwUl2MQJGc8NEhIHN7i1epOB6TkzBfcIxAVxeH_hrt4AwFCTisA-SHjwR3MIHUeUEyheQ/exec"
+        val noticeApiUrl =
+            "https://script.google.com/macros/s/AKfycbwUl2MQJGc8NEhIHN7i1epOB6TkzBfcIxAVxeH_hrt4AwFCTisA-SHjwR3MIHUeUEyheQ/exec"
         val notificationsList = mutableListOf<AppNotification>()
 
         try {
@@ -2062,118 +2419,128 @@ fun DashboardScreen(
             // 1. Primary API Fetch (Admin: pending, Teacher: history/personal updates, Student: approved list)
             val primaryUrlString = when {
                 isAdmin -> "$noticeApiUrl?action=pending"
-                isTeacher -> "$noticeApiUrl?action=history&postedBy=" + URLEncoder.encode(userName, "UTF-8")
+                isTeacher -> "$noticeApiUrl?action=history&postedBy=" + URLEncoder.encode(
+                    userName,
+                    "UTF-8"
+                )
+
                 else -> "$noticeApiUrl?action=list"
             }
             try {
 
-            val primaryResult = withContext(Dispatchers.IO) {
-                val conn = URL(primaryUrlString).openConnection() as HttpURLConnection
-                conn.requestMethod = "GET"
-                conn.connectTimeout = 15000
-                conn.readTimeout = 15000
-                conn.instanceFollowRedirects = true
-                try {
-                    if (conn.responseCode == 200) conn.inputStream.bufferedReader().use { it.readText() } else null
-                } finally {
-                    conn.disconnect()
+                val primaryResult = withContext(Dispatchers.IO) {
+                    val conn = URL(primaryUrlString).openConnection() as HttpURLConnection
+                    conn.requestMethod = "GET"
+                    conn.connectTimeout = 15000
+                    conn.readTimeout = 15000
+                    conn.instanceFollowRedirects = true
+                    try {
+                        if (conn.responseCode == 200) conn.inputStream.bufferedReader()
+                            .use { it.readText() } else null
+                    } finally {
+                        conn.disconnect()
+                    }
                 }
-            }
 
-            if (primaryResult != null) {
-                val json = JSONObject(primaryResult)
-                if (json.optBoolean("success")) {
-                    val array = json.optJSONArray("notices") ?: JSONArray()
-                    val sdf = SimpleDateFormat("dd/MM/yyyy hh:mm a", Locale.ENGLISH)
+                if (primaryResult != null) {
+                    val json = JSONObject(primaryResult)
+                    if (json.optBoolean("success")) {
+                        val array = json.optJSONArray("notices") ?: JSONArray()
+                        val sdf = SimpleDateFormat("dd/MM/yyyy hh:mm a", Locale.ENGLISH)
 
-                    for (i in 0 until array.length()) {
-                        val obj = array.getJSONObject(i)
-                        val noticeId = obj.optString("noticeId")
-                        val title = obj.optString("title")
-                        val message = obj.optString("message")
-                        val audience = obj.optString("audience")
-                        val postedBy = obj.optString("postedBy")
-                        val dateStr = obj.optString("date")
-                        val status = obj.optString("status")
+                        for (i in 0 until array.length()) {
+                            val obj = array.getJSONObject(i)
+                            val noticeId = obj.optString("noticeId")
+                            val title = obj.optString("title")
+                            val message = obj.optString("message")
+                            val audience = obj.optString("audience")
+                            val postedBy = obj.optString("postedBy")
+                            val dateStr = obj.optString("date")
+                            val status = obj.optString("status")
 
-                        val parsedTimestamp = try {
-                            sdf.parse(dateStr)?.time ?: 0L
-                        } catch (e: Exception) {
-                            0L
-                        }
-
-                        if (isAdmin) {
-                            if (status.equals("Pending", ignoreCase = true)) {
-                                notificationsList.add(
-                                    AppNotification(
-                                        notificationId = noticeId,
-                                        type = "NOTICE_PENDING",
-                                        title = "New Notice for Approval",
-                                        message = "Teacher $postedBy submitted: $title",
-                                        createdAt = parsedTimestamp,
-                                        dateText = dateStr,
-                                        targetRole = "Admin",
-                                        referenceId = noticeId,
-                                        isImportant = true
-                                    )
-                                )
+                            val parsedTimestamp = try {
+                                sdf.parse(dateStr)?.time ?: 0L
+                            } catch (e: Exception) {
+                                0L
                             }
-                        } else if (isTeacher) {
-                            if (status.equals("Approved", ignoreCase = true)) {
-                                notificationsList.add(
-                                    AppNotification(
-                                        notificationId = "${noticeId}_APPROVED",
-                                        type = "NOTICE_APPROVED",
-                                        title = "Notice Approved",
-                                        message = "Your notice '$title' has been approved.",
-                                        createdAt = parsedTimestamp,
-                                        dateText = dateStr,
-                                        targetRole = "Teacher",
-                                        referenceId = noticeId
-                                    )
-                                )
-                            } else if (status.equals("Rejected", ignoreCase = true)) {
-                                val remark = obj.optString("adminRemark")
-                                val extra = if (remark.isNotBlank()) "\nRemark: $remark" else ""
-                                notificationsList.add(
-                                    AppNotification(
-                                        notificationId = "${noticeId}_REJECTED",
-                                        type = "NOTICE_REJECTED",
-                                        title = "Notice Rejected",
-                                        message = "Your notice '$title' was rejected.$extra",
-                                        createdAt = parsedTimestamp,
-                                        dateText = dateStr,
-                                        targetRole = "Teacher",
-                                        referenceId = noticeId,
-                                        isImportant = true
-                                    )
-                                )
-                            }
-                        } else if (isStudent) {
-                            val matchesAudience = audience.equals("Students", ignoreCase = true) || audience.equals("All", ignoreCase = true)
-                            val isApproved = status.equals("Approved", ignoreCase = true) || obj.optBoolean("active", false)
 
-                            if (matchesAudience && isApproved && title.isNotBlank()) {
-                                notificationsList.add(
-                                    AppNotification(
-                                        notificationId = noticeId,
-                                        type = "NEW_NOTICE",
-                                        title = title,
-                                        message = message,
-                                        createdAt = parsedTimestamp,
-                                        dateText = dateStr,
-                                        targetRole = "Student",
-                                        referenceId = noticeId,
-                                        isImportant = true
+                            if (isAdmin) {
+                                if (status.equals("Pending", ignoreCase = true)) {
+                                    notificationsList.add(
+                                        AppNotification(
+                                            notificationId = noticeId,
+                                            type = "NOTICE_PENDING",
+                                            title = "New Notice for Approval",
+                                            message = "Teacher $postedBy submitted: $title",
+                                            createdAt = parsedTimestamp,
+                                            dateText = dateStr,
+                                            targetRole = "Admin",
+                                            referenceId = noticeId,
+                                            isImportant = true
+                                        )
                                     )
-                                )
+                                }
+                            } else if (isTeacher) {
+                                if (status.equals("Approved", ignoreCase = true)) {
+                                    notificationsList.add(
+                                        AppNotification(
+                                            notificationId = "${noticeId}_APPROVED",
+                                            type = "NOTICE_APPROVED",
+                                            title = "Notice Approved",
+                                            message = "Your notice '$title' has been approved.",
+                                            createdAt = parsedTimestamp,
+                                            dateText = dateStr,
+                                            targetRole = "Teacher",
+                                            referenceId = noticeId
+                                        )
+                                    )
+                                } else if (status.equals("Rejected", ignoreCase = true)) {
+                                    val remark = obj.optString("adminRemark")
+                                    val extra = if (remark.isNotBlank()) "\nRemark: $remark" else ""
+                                    notificationsList.add(
+                                        AppNotification(
+                                            notificationId = "${noticeId}_REJECTED",
+                                            type = "NOTICE_REJECTED",
+                                            title = "Notice Rejected",
+                                            message = "Your notice '$title' was rejected.$extra",
+                                            createdAt = parsedTimestamp,
+                                            dateText = dateStr,
+                                            targetRole = "Teacher",
+                                            referenceId = noticeId,
+                                            isImportant = true
+                                        )
+                                    )
+                                }
+                            } else if (isStudent) {
+                                val matchesAudience = audience.equals(
+                                    "Students",
+                                    ignoreCase = true
+                                ) || audience.equals("All", ignoreCase = true)
+                                val isApproved = status.equals(
+                                    "Approved",
+                                    ignoreCase = true
+                                ) || obj.optBoolean("active", false)
+
+                                if (matchesAudience && isApproved && title.isNotBlank()) {
+                                    notificationsList.add(
+                                        AppNotification(
+                                            notificationId = noticeId,
+                                            type = "NEW_NOTICE",
+                                            title = title,
+                                            message = message,
+                                            createdAt = parsedTimestamp,
+                                            dateText = dateStr,
+                                            targetRole = "Student",
+                                            referenceId = noticeId,
+                                            isImportant = true
+                                        )
+                                    )
+                                }
                             }
                         }
                     }
                 }
-            }
-            }
-            catch (e: Exception) {
+            } catch (e: Exception) {
                 // Continue with the next notification source
             }
 
@@ -2181,13 +2548,15 @@ fun DashboardScreen(
             if (isTeacher) {
                 try {
                     val listResult = withContext(Dispatchers.IO) {
-                        val conn = URL("$noticeApiUrl?action=list").openConnection() as HttpURLConnection
+                        val conn =
+                            URL("$noticeApiUrl?action=list").openConnection() as HttpURLConnection
                         conn.requestMethod = "GET"
                         conn.connectTimeout = 15000
                         conn.readTimeout = 15000
                         conn.instanceFollowRedirects = true
                         try {
-                            if (conn.responseCode == 200) conn.inputStream.bufferedReader().use { it.readText() } else null
+                            if (conn.responseCode == 200) conn.inputStream.bufferedReader()
+                                .use { it.readText() } else null
                         } finally {
                             conn.disconnect()
                         }
@@ -2208,8 +2577,14 @@ fun DashboardScreen(
                                 val dateStr = obj.optString("date")
                                 val status = obj.optString("status")
 
-                                val matchesAudience = audience.equals("Teachers", ignoreCase = true) || audience.equals("All", ignoreCase = true)
-                                val isApproved = status.equals("Approved", ignoreCase = true) || obj.optBoolean("active", false)
+                                val matchesAudience = audience.equals(
+                                    "Teachers",
+                                    ignoreCase = true
+                                ) || audience.equals("All", ignoreCase = true)
+                                val isApproved = status.equals(
+                                    "Approved",
+                                    ignoreCase = true
+                                ) || obj.optBoolean("active", false)
 
                                 if (matchesAudience && isApproved && title.isNotBlank()) {
                                     val parsedTimestamp = try {
@@ -2236,7 +2611,7 @@ fun DashboardScreen(
                         }
                     }
 
-            } catch (e: Exception) {
+                } catch (e: Exception) {
                     // Continue with Firestore notification source
                 }
             }
@@ -2247,7 +2622,8 @@ fun DashboardScreen(
                 val snapshot = withContext(Dispatchers.IO) {
                     try {
                         Tasks.await(
-                            db.collection("notices").orderBy("timestamp", Query.Direction.DESCENDING).get()
+                            db.collection("notices")
+                                .orderBy("timestamp", Query.Direction.DESCENDING).get()
                         )
                     } catch (e: Exception) {
                         null
@@ -2264,9 +2640,15 @@ fun DashboardScreen(
                         val docAudience = doc.getString("audience") ?: "All"
 
                         val matchesAudience = if (isStudent) {
-                            docAudience.equals("Students", ignoreCase = true) || docAudience.equals("All", ignoreCase = true)
+                            docAudience.equals("Students", ignoreCase = true) || docAudience.equals(
+                                "All",
+                                ignoreCase = true
+                            )
                         } else if (isTeacher) {
-                            docAudience.equals("Teachers", ignoreCase = true) || docAudience.equals("All", ignoreCase = true)
+                            docAudience.equals("Teachers", ignoreCase = true) || docAudience.equals(
+                                "All",
+                                ignoreCase = true
+                            )
                         } else true
 
                         if (title.isNotBlank() && matchesAudience) {
@@ -2289,10 +2671,12 @@ fun DashboardScreen(
             }
 
             // Deduplicate notifications by notificationId or title+message
-            val deduplicatedList = notificationsList.distinctBy { it.notificationId.ifBlank { "${it.title}_${it.message}" } }
+            val deduplicatedList =
+                notificationsList.distinctBy { it.notificationId.ifBlank { "${it.title}_${it.message}" } }
             val sortedList = deduplicatedList.sortedByDescending { it.createdAt }
 
-            val readSet = prefs.getStringSet("read_notification_ids_$userName", emptySet()) ?: emptySet()
+            val readSet =
+                prefs.getStringSet("read_notification_ids_$userName", emptySet()) ?: emptySet()
             val unreadCount = sortedList.count { it.notificationId !in readSet }
 
             withContext(Dispatchers.Main) {
@@ -2308,7 +2692,8 @@ fun DashboardScreen(
         if (role.equals("Admin", ignoreCase = true)) {
             CoroutineScope(Dispatchers.IO).launch {
                 try {
-                    val scriptUrl = "https://script.google.com/macros/s/AKfycbwbBEeUDm0gY_mCuPUJC04sw-O1aWlTTGbyu-x4yhl-BOLbUIoHD4cqWuuS_pNKRSCi/exec"
+                    val scriptUrl =
+                        "https://script.google.com/macros/s/AKfycbwbBEeUDm0gY_mCuPUJC04sw-O1aWlTTGbyu-x4yhl-BOLbUIoHD4cqWuuS_pNKRSCi/exec"
                     val connection = URL(scriptUrl).openConnection() as HttpURLConnection
                     connection.requestMethod = "GET"
                     connection.connectTimeout = 20000
@@ -2321,13 +2706,15 @@ fun DashboardScreen(
                             val loadedStudents = mutableListOf<SheetStudent>()
                             for (i in 0 until studentsArray.length()) {
                                 val student = studentsArray.getJSONObject(i)
-                                loadedStudents.add(SheetStudent(
-                                    rollNo = student.optString("rollNo").trim(),
-                                    studentName = student.optString("studentName").trim(),
-                                    mobileNo = student.optString("mobileNo").trim(),
-                                    standard = student.optString("standard").trim(),
-                                    board = student.optString("board").trim()
-                                ))
+                                loadedStudents.add(
+                                    SheetStudent(
+                                        rollNo = student.optString("rollNo").trim(),
+                                        studentName = student.optString("studentName").trim(),
+                                        mobileNo = student.optString("mobileNo").trim(),
+                                        standard = student.optString("standard").trim(),
+                                        board = student.optString("board").trim()
+                                    )
+                                )
                             }
                             withContext(Dispatchers.Main) {
                                 globalStudents = loadedStudents
@@ -2454,18 +2841,29 @@ fun DashboardScreen(
                             HomeworkScreen(onBack = { selectedScreen = null })
                         }
                     }
+
                     "Study Material" -> StudyMaterialScreen(onBack = { selectedScreen = null })
                     "Attendance" -> AttendanceScreen(onBack = { selectedScreen = null })
                     "My Attendance" -> TeacherAttendanceScreen(
                         onBack = { selectedScreen = null },
                         onHistoryStateChange = { isTeacherHistoryOpen = it }
                     )
-                    "Student Attendance" -> StudentAttendanceForTeacherScreen(onBack = { selectedScreen = null })
+
+                    "Student Attendance" -> StudentAttendanceForTeacherScreen(onBack = {
+                        selectedScreen = null
+                    })
+
                     "Exams & Results" -> ResultsScreen(onBack = { selectedScreen = null })
                     "Exams & Marks" -> ResultsScreen(onBack = { selectedScreen = null })
                     "Fees" -> FeesScreen(onBack = { selectedScreen = null })
-                    "Weekly Timetable" -> AdminWeeklyTimetableScreen(onBack = { selectedScreen = null })
-                    "Today's All Lectures" -> AdminTodayLecturesScreen(onBack = { selectedScreen = null })
+                    "Weekly Timetable" -> AdminWeeklyTimetableScreen(onBack = {
+                        selectedScreen = null
+                    })
+
+                    "Today's All Lectures" -> AdminTodayLecturesScreen(onBack = {
+                        selectedScreen = null
+                    })
+
                     "Fees Structure" -> FeesScreen(onBack = { selectedScreen = null })
                     "Notices" -> NoticeBoardScreen(
                         userRole = CurrentUser.role,
@@ -2473,13 +2871,18 @@ fun DashboardScreen(
                         onBack = { selectedScreen = null },
                         onNoticeHistoryStateChange = { isNoticeHistoryOpen = it }
                     )
+
                     "Notice Board" -> NoticeBoardScreen(
                         userRole = CurrentUser.role,
                         userName = CurrentUser.name,
                         onBack = { selectedScreen = null },
                         onNoticeHistoryStateChange = { isNoticeHistoryOpen = it }
                     )
-                    "Students" -> TeacherStudentsScreen(userRole = role, onBack = { selectedScreen = null })
+
+                    "Students" -> TeacherStudentsScreen(
+                        userRole = role,
+                        onBack = { selectedScreen = null })
+
                     "Teachers" -> {
                         if (role == "Admin") {
                             AdminTeachersScreen(
@@ -2490,6 +2893,7 @@ fun DashboardScreen(
                             AddTeacherScreen(onBack = { selectedScreen = null })
                         }
                     }
+
                     else -> MenuScreen(title = screenName, onBack = { selectedScreen = null })
                 }
             }
@@ -2514,6 +2918,7 @@ fun DashboardScreen(
             MenuItem("Exams & Results", Icons.Default.Assignment),
             MenuItem("Notices", Icons.Default.Notifications)
         )
+
         "Teacher" -> listOf(
             MenuItem("Students", Icons.Default.Group),
             MenuItem("My Attendance", Icons.Default.CheckCircle),
@@ -2523,12 +2928,14 @@ fun DashboardScreen(
             MenuItem("Study Material", Icons.Default.MenuBook),
             MenuItem("Notices", Icons.Default.Notifications)
         ).filter { it.title != "Students" && it.title != "Study Material" }
+
         "Admin" -> listOf(
             MenuItem("Weekly Timetable", Icons.Default.CalendarToday),
             MenuItem("Today's All Lectures", Icons.Default.Today),
             MenuItem("Fees Structure", Icons.Default.Payments),
             MenuItem("Notice Board", Icons.Default.Notifications)
         )
+
         else -> emptyList()
     }
 
@@ -2552,6 +2959,9 @@ fun DashboardScreen(
                 notificationCount = notificationBadgeCount,
                 onNotificationClick = {
                     showNotificationCenter = true
+                },
+                modifier = Modifier.onGloballyPositioned { coords ->
+                    targetBoundsMap["Notifications"] = coords.boundsInWindow()
                 }
             )
         }
@@ -2573,14 +2983,22 @@ fun DashboardScreen(
                     IndiumButton(
                         text = "Add Student",
                         onClick = { showAddStudent = true },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .onGloballyPositioned { coords ->
+                                targetBoundsMap["Student Profile"] = coords.boundsInWindow()
+                            },
                         containerColor = Color(0xFF7C4DFF)
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     IndiumButton(
                         text = "Add Teacher",
                         onClick = { showAddTeacher = true },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .onGloballyPositioned { coords ->
+                                targetBoundsMap["Teacher Information"] = coords.boundsInWindow()
+                            },
                         containerColor = Color(0xFF673AB7)
                     )
                 }
@@ -2593,7 +3011,11 @@ fun DashboardScreen(
                     value = dashboardSearchQuery,
                     onValueChange = { dashboardSearchQuery = it },
                     placeholder = { Text("Search students or teachers...") },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onGloballyPositioned { coords ->
+                            targetBoundsMap["Search"] = coords.boundsInWindow()
+                        },
                     shape = RoundedCornerShape(12.dp),
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                     singleLine = true,
@@ -2614,14 +3036,22 @@ fun DashboardScreen(
                     IndiumButton(
                         text = "Today's Lectures",
                         onClick = { showTeacherTodayLectures = true },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .onGloballyPositioned { coords ->
+                                targetBoundsMap["My Lectures"] = coords.boundsInWindow()
+                            },
                         containerColor = Color(0xFF7C4DFF)
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     IndiumButton(
                         text = "Apply Leave",
                         onClick = { showTeacherLeave = true },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .onGloballyPositioned { coords ->
+                                targetBoundsMap["Apply Leave"] = coords.boundsInWindow()
+                            },
                         containerColor = Color(0xFF673AB7)
                     )
                 }
@@ -2633,13 +3063,24 @@ fun DashboardScreen(
 
         if (role.equals("Admin", ignoreCase = true) && dashboardSearchQuery.trim().isNotEmpty()) {
             val query = dashboardSearchQuery.trim()
-            val matchesStudents = globalStudents.filter { it.studentName.contains(query, ignoreCase = true) }
-            val matchesTeachers = globalTeachers.filter { it.name.contains(query, ignoreCase = true) }
+            val matchesStudents =
+                globalStudents.filter { it.studentName.contains(query, ignoreCase = true) }
+            val matchesTeachers =
+                globalTeachers.filter { it.name.contains(query, ignoreCase = true) }
 
             if (matchesStudents.isEmpty() && matchesTeachers.isEmpty()) {
                 item(span = { GridItemSpan(2) }) {
-                    Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                        Text(text = "No records match.", fontWeight = FontWeight.Bold, color = Color.Gray)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No records match.",
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Gray
+                        )
                     }
                 }
             } else {
@@ -2647,7 +3088,10 @@ fun DashboardScreen(
                     item(span = { GridItemSpan(2) }) {
                         val context = LocalContext.current
                         IndiumCard(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { selectedProfileStudent = student },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                                .clickable { selectedProfileStudent = student },
                             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
@@ -2668,7 +3112,10 @@ fun DashboardScreen(
                                     ) {
                                         Text(
                                             text = "STUDENT",
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                            modifier = Modifier.padding(
+                                                horizontal = 6.dp,
+                                                vertical = 2.dp
+                                            ),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = Color(0xFF7C4DFF),
                                             fontWeight = FontWeight.Bold
@@ -2677,7 +3124,7 @@ fun DashboardScreen(
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "${student.standard} • ${if(student.board.isBlank()) "General" else student.board}",
+                                    text = "${student.standard} • ${if (student.board.isBlank()) "General" else student.board}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Color.Gray
                                 )
@@ -2687,9 +3134,13 @@ fun DashboardScreen(
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier.clickable {
                                             try {
-                                                val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${student.mobileNo}"))
+                                                val intent = Intent(
+                                                    Intent.ACTION_DIAL,
+                                                    Uri.parse("tel:${student.mobileNo}")
+                                                )
                                                 context.startActivity(intent)
-                                            } catch (e: Exception) {}
+                                            } catch (e: Exception) {
+                                            }
                                         }
                                     ) {
                                         Icon(
@@ -2718,7 +3169,10 @@ fun DashboardScreen(
                     item(span = { GridItemSpan(2) }) {
                         val context = LocalContext.current
                         IndiumCard(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { selectedProfileTeacher = teacher },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                                .clickable { selectedProfileTeacher = teacher },
                             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
@@ -2739,7 +3193,10 @@ fun DashboardScreen(
                                     ) {
                                         Text(
                                             text = "TEACHER",
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                            modifier = Modifier.padding(
+                                                horizontal = 6.dp,
+                                                vertical = 2.dp
+                                            ),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = Color(0xFF673AB7),
                                             fontWeight = FontWeight.Bold
@@ -2760,9 +3217,13 @@ fun DashboardScreen(
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier.clickable {
                                             try {
-                                                val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${teacher.mobile}"))
+                                                val intent = Intent(
+                                                    Intent.ACTION_DIAL,
+                                                    Uri.parse("tel:${teacher.mobile}")
+                                                )
                                                 context.startActivity(intent)
-                                            } catch (e: Exception) {}
+                                            } catch (e: Exception) {
+                                            }
                                         }
                                     ) {
                                         Icon(
@@ -2803,11 +3264,23 @@ fun DashboardScreen(
             }
 
             items(menuItems) { item ->
+                val targetKey = when (item.title) {
+                    "My Attendance" -> "Leave History"
+                    "Student Attendance" -> "Student Attendance"
+                    "Homework" -> "Homework"
+                    "Exams & Marks" -> "Exams & Marks"
+                    "Notices" -> "Notices"
+                    else -> item.title
+                }
                 IndiumFeatureCard(
                     title = item.title,
                     icon = item.icon,
                     onClick = { selectedScreen = item.title },
-                    modifier = Modifier.padding(bottom = 8.dp)
+                    modifier = Modifier
+                        .padding(bottom = 8.dp)
+                        .onGloballyPositioned { coords ->
+                            targetBoundsMap[targetKey] = coords.boundsInWindow()
+                        }
                 )
             }
 
@@ -2905,21 +3378,22 @@ fun TimetableScreen(
 
     var isLoading by remember { mutableStateOf(!hasValidCache) }
     var errorMessage by remember { mutableStateOf("") }
-    
-    var timetableData by remember { 
+
+    var timetableData by remember {
         mutableStateOf<Map<String, List<TodayLecture>>>(
             if (hasValidCache) StudentTimetableCache.data else emptyMap()
-        ) 
+        )
     }
-    
-    val scriptUrl = "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec"
+
+    val scriptUrl =
+        "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec"
 
     LaunchedEffect(Unit) {
         if (studentClass.isBlank()) {
             errorMessage = "Class information not found in profile."
             return@LaunchedEffect
         }
-        
+
         if (timetableData.isEmpty()) {
             isLoading = true
         }
@@ -2927,15 +3401,16 @@ fun TimetableScreen(
         try {
             val encodedClass = URLEncoder.encode(studentClass, "UTF-8")
             val encodedBoard = URLEncoder.encode(studentBoard, "UTF-8")
-            val urlString = "$scriptUrl?action=getTimetable&standard=$encodedClass&board=$encodedBoard"
-            
+            val urlString =
+                "$scriptUrl?action=getTimetable&standard=$encodedClass&board=$encodedBoard"
+
             val result = withContext(Dispatchers.IO) {
                 val connection = URL(urlString).openConnection() as HttpURLConnection
                 connection.requestMethod = "GET"
                 connection.connectTimeout = 20000
                 connection.readTimeout = 20000
                 connection.instanceFollowRedirects = true
-                
+
                 try {
                     val code = connection.responseCode
                     if (code == 200) {
@@ -2953,8 +3428,9 @@ fun TimetableScreen(
                 if (json.optBoolean("success", false)) {
                     val daysJson = json.optJSONObject("timetable") ?: JSONObject()
                     val loadedData = mutableMapOf<String, List<TodayLecture>>()
-                    val days = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
-                    
+                    val days =
+                        listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
+
                     days.forEach { day ->
                         val dayArray = daysJson.optJSONArray(day)
                         if (dayArray != null) {
@@ -3023,7 +3499,11 @@ fun TimetableScreen(
                         )
                         Text(
                             text = "$studentClass - $studentBoard",
-                            style = MaterialTheme.typography.bodyMedium.copy(color = Color.White.copy(alpha = 0.8f))
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                color = Color.White.copy(
+                                    alpha = 0.8f
+                                )
+                            )
                         )
                     }
                 }
@@ -3040,7 +3520,8 @@ fun TimetableScreen(
                         )
                     }
                 } else {
-                    val days = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
+                    val days =
+                        listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
                     days.forEach { day ->
                         val lectures = timetableData[day] ?: emptyList()
                         if (lectures.isNotEmpty()) {
@@ -3052,7 +3533,7 @@ fun TimetableScreen(
                                 ),
                                 modifier = Modifier.padding(vertical = 12.dp, horizontal = 4.dp)
                             )
-                            
+
                             lectures.forEach { lecture ->
                                 IndiumCard(
                                     modifier = Modifier
@@ -3077,7 +3558,9 @@ fun TimetableScreen(
                                             )
                                             Text(
                                                 text = lecture.teacher,
-                                                style = MaterialTheme.typography.bodySmall.copy(color = Color.Gray)
+                                                style = MaterialTheme.typography.bodySmall.copy(
+                                                    color = Color.Gray
+                                                )
                                             )
                                             if (lecture.adjusted) {
                                                 Text(
@@ -3102,7 +3585,7 @@ fun TimetableScreen(
                         }
                     }
                 }
-                
+
                 Spacer(modifier = Modifier.height(24.dp))
                 IndiumButton(text = "BACK", onClick = onBack)
                 Spacer(modifier = Modifier.height(24.dp))
@@ -3830,7 +4313,7 @@ fun TeacherHomeworkScreen(
 
                             val findUrl =
                                 "$HOMEWORK_UPLOAD_URL?action=findHomeworkFile" +
-                                "&fileName=$encodedFileName"
+                                        "&fileName=$encodedFileName"
 
                             val getClient =
                                 OkHttpClient.Builder()
@@ -4065,7 +4548,6 @@ fun saveHomeworkBitmap(
 }
 
 
-
 // ======================================================
 // FEES
 // ======================================================
@@ -4091,9 +4573,15 @@ fun FeesScreen(
             contentColor = Color.White
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
-                Text(text = "Fee Summary", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
+                Text(
+                    text = "Fee Summary",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                )
                 Spacer(modifier = Modifier.height(16.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
                     AttendanceStatItem("Total", "₹50k")
                     AttendanceStatItem("Paid", "₹30k")
                     AttendanceStatItem("Balance", "₹20k")
@@ -4105,7 +4593,10 @@ fun FeesScreen(
 
         Text(
             text = "Recent Transactions",
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = Color(0xFF252238))
+            style = MaterialTheme.typography.titleMedium.copy(
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF252238)
+            )
         )
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -4115,7 +4606,11 @@ fun FeesScreen(
         FeeTransactionItem("Bus Fees", "₹5,000", "Due on 01 Oct 2026", false)
 
         Spacer(modifier = Modifier.height(32.dp))
-        IndiumButton(text = "PAY NOW", onClick = { /* Payment Integration */ }, containerColor = Color(0xFF4CAF50))
+        IndiumButton(
+            text = "PAY NOW",
+            onClick = { /* Payment Integration */ },
+            containerColor = Color(0xFF4CAF50)
+        )
         Spacer(modifier = Modifier.height(12.dp))
         IndiumOutlinedButton(text = "BACK", onClick = onBack)
     }
@@ -4124,11 +4619,15 @@ fun FeesScreen(
 @Composable
 fun FeeTransactionItem(title: String, amount: String, date: String, isPaid: Boolean) {
     IndiumCard(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
         containerColor = Color.White
     ) {
         Row(
-            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+            modifier = Modifier
+                .padding(16.dp)
+                .fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -4160,7 +4659,7 @@ fun AttendanceScreen(
 
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf("") }
-    
+
     var workingDays by remember { mutableStateOf(0) }
     var presentDays by remember { mutableStateOf(0) }
     var attendancePercentage by remember { mutableStateOf(0f) }
@@ -4170,21 +4669,23 @@ fun AttendanceScreen(
     val studentRollNo = CurrentUser.rollNo
     val studentClass = CurrentUser.className
 
-    val attendanceUrl = "https://script.google.com/macros/s/AKfycbx3vXqB5Vs6DToJp5ArnnbuIGIvBzGwcLJFFUWtDrlBrD7dqLcRj7u89xNrskwPjrgu/exec"
+    val attendanceUrl =
+        "https://script.google.com/macros/s/AKfycbx3vXqB5Vs6DToJp5ArnnbuIGIvBzGwcLJFFUWtDrlBrD7dqLcRj7u89xNrskwPjrgu/exec"
 
     LaunchedEffect(Unit) {
         if (studentRollNo.isBlank() || studentClass.isBlank()) {
             errorMessage = "Student information incomplete."
             return@LaunchedEffect
         }
-        
+
         isLoading = true
         errorMessage = ""
 
         try {
             val encodedClass = URLEncoder.encode(studentClass, "UTF-8")
             val encodedRollNo = URLEncoder.encode(studentRollNo, "UTF-8")
-            val urlString = "$attendanceUrl?action=getStudentAttendance&standard=$encodedClass&rollNo=$encodedRollNo"
+            val urlString =
+                "$attendanceUrl?action=getStudentAttendance&standard=$encodedClass&rollNo=$encodedRollNo"
 
             val result = withContext(Dispatchers.IO) {
                 val connection = URL(urlString).openConnection() as HttpURLConnection
@@ -4230,7 +4731,8 @@ fun AttendanceScreen(
                     // Sort newest dates first
                     val sortedHistory = loadedHistory.sortedByDescending { pair ->
                         try {
-                            SimpleDateFormat("d MMMM yyyy", Locale.ENGLISH).parse(pair.first)?.time ?: 0L
+                            SimpleDateFormat("d MMMM yyyy", Locale.ENGLISH).parse(pair.first)?.time
+                                ?: 0L
                         } catch (e: Exception) {
                             0L
                         }
@@ -4238,7 +4740,8 @@ fun AttendanceScreen(
 
                     workingDays = sortedHistory.size
                     presentDays = presentCount
-                    attendancePercentage = if (workingDays > 0) (presentCount * 100f) / workingDays else 0f
+                    attendancePercentage =
+                        if (workingDays > 0) (presentCount * 100f) / workingDays else 0f
                     history = sortedHistory
 
                     if (workingDays == 0) {
@@ -4280,7 +4783,10 @@ fun AttendanceScreen(
                             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                         )
                         Spacer(modifier = Modifier.height(16.dp))
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
                             AttendanceStatItem("Total", "$workingDays")
                             AttendanceStatItem("Present", "$presentDays")
                             AttendanceStatItem("%", "${attendancePercentage.toInt()}%")
@@ -4288,7 +4794,10 @@ fun AttendanceScreen(
                         Spacer(modifier = Modifier.height(16.dp))
                         LinearProgressIndicator(
                             progress = if (workingDays > 0) presentDays.toFloat() / workingDays else 0f,
-                            modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(4.dp)),
                             color = Color.White,
                             trackColor = Color.White.copy(alpha = 0.3f)
                         )
@@ -4332,21 +4841,29 @@ fun AttendanceScreen(
                             containerColor = Color.White
                         ) {
                             Row(
-                                modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                                modifier = Modifier
+                                    .padding(16.dp)
+                                    .fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(text = entry.first, fontWeight = FontWeight.Medium, color = Color(0xFF252238))
+                                Text(
+                                    text = entry.first,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFF252238)
+                                )
                                 Text(
                                     text = entry.second,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = if (entry.second.equals("Present", true)) Color(0xFF4CAF50) else Color.Red
+                                    color = if (entry.second.equals("Present", true)) Color(
+                                        0xFF4CAF50
+                                    ) else Color.Red
                                 )
                             }
                         }
                     }
                 }
-                
+
                 Spacer(modifier = Modifier.height(24.dp))
                 IndiumButton(text = "BACK", onClick = onBack)
                 Spacer(modifier = Modifier.height(24.dp))
@@ -4391,7 +4908,8 @@ fun StudentResultsScreen(
 
     val studentName = CurrentUser.name
     val studentRollNo = CurrentUser.rollNo
-    val scriptUrl = "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec"
+    val scriptUrl =
+        "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec"
 
     LaunchedEffect(Unit) {
         if (studentName.isBlank()) {
@@ -4403,7 +4921,8 @@ fun StudentResultsScreen(
         try {
             val encodedName = URLEncoder.encode(studentName.trim(), "UTF-8")
             val encodedRoll = URLEncoder.encode(studentRollNo.trim(), "UTF-8")
-            val urlString = "$scriptUrl?action=getStudentResults&studentName=$encodedName&rollNo=$encodedRoll"
+            val urlString =
+                "$scriptUrl?action=getStudentResults&studentName=$encodedName&rollNo=$encodedRoll"
             val response = withContext(Dispatchers.IO) {
                 val connection = URL(urlString).openConnection() as HttpURLConnection
                 connection.requestMethod = "GET"
@@ -4457,27 +4976,55 @@ fun StudentResultsScreen(
             contentColor = Color.White
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
-                Text(text = "Examination Results", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
-                Text(text = "Student: ${CurrentUser.name} (Roll #${CurrentUser.rollNo})", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    text = "Examination Results",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                )
+                Text(
+                    text = "Student: ${CurrentUser.name} (Roll #${CurrentUser.rollNo})",
+                    style = MaterialTheme.typography.bodyMedium
+                )
             }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
 
         if (isLoading) {
-            Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(200.dp),
+                contentAlignment = Alignment.Center
+            ) {
                 CircularProgressIndicator(color = Color(0xFF7C4DFF))
             }
         } else if (errorMessage.isNotEmpty()) {
             IndiumCard(modifier = Modifier.fillMaxWidth()) {
-                Text(text = errorMessage, modifier = Modifier.padding(16.dp), color = Color.Red, fontWeight = FontWeight.Bold)
+                Text(
+                    text = errorMessage,
+                    modifier = Modifier.padding(16.dp),
+                    color = Color.Red,
+                    fontWeight = FontWeight.Bold
+                )
             }
         } else if (resultsList.isEmpty()) {
             IndiumCard(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(imageVector = Icons.Default.Assignment, contentDescription = null, modifier = Modifier.size(48.dp), tint = Color.Gray)
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Assignment,
+                        contentDescription = null,
+                        modifier = Modifier.size(48.dp),
+                        tint = Color.Gray
+                    )
                     Spacer(modifier = Modifier.height(12.dp))
-                    Text(text = "No examination results published yet.", style = MaterialTheme.typography.titleMedium, color = Color.Gray)
+                    Text(
+                        text = "No examination results published yet.",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.Gray
+                    )
                 }
             }
         } else {
@@ -4485,10 +5032,17 @@ fun StudentResultsScreen(
             groupedByExam.forEach { (examName, results) ->
                 Text(
                     text = examName,
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = Color(0xFF673AB7)),
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF673AB7)
+                    ),
                     modifier = Modifier.padding(vertical = 8.dp)
                 )
-                IndiumCard(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                IndiumCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp)
+                ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         var totalObtained = 0.0
                         var totalMax = 0.0
@@ -4504,9 +5058,20 @@ fun StudentResultsScreen(
                         Spacer(modifier = Modifier.height(12.dp))
                         HorizontalDivider(color = Color(0xFFE6DDFB))
                         Spacer(modifier = Modifier.height(12.dp))
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(text = "Total Marks", fontWeight = FontWeight.Bold, color = Color(0xFF252238))
-                            Text(text = "${totalObtained.toInt()} / ${totalMax.toInt()}", fontWeight = FontWeight.ExtraBold, color = Color(0xFF7C4DFF))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Total Marks",
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF252238)
+                            )
+                            Text(
+                                text = "${totalObtained.toInt()} / ${totalMax.toInt()}",
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFF7C4DFF)
+                            )
                         }
                     }
                 }
@@ -4531,9 +5096,11 @@ fun TeacherResultsScreen(
             onBack = { currentView = "MENU" },
             onSavedSuccess = { currentView = "MENU" }
         )
+
         "HISTORY" -> TeacherResultsHistoryScreen(
             onBack = { currentView = "MENU" }
         )
+
         else -> TeacherResultsMenuScreen(
             onEnterMarks = { currentView = "ENTRY" },
             onViewHistory = { currentView = "HISTORY" },
@@ -4567,19 +5134,35 @@ fun TeacherResultsMenuScreen(
         Spacer(modifier = Modifier.height(30.dp))
 
         IndiumCard(
-            modifier = Modifier.fillMaxWidth().clickable { onEnterMarks() },
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onEnterMarks() },
             containerColor = Color(0xFF7C4DFF),
             contentColor = Color.White
         ) {
             Row(
-                modifier = Modifier.padding(20.dp).fillMaxWidth(),
+                modifier = Modifier
+                    .padding(20.dp)
+                    .fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(imageVector = Icons.Default.EditNote, contentDescription = null, modifier = Modifier.size(36.dp))
+                Icon(
+                    imageVector = Icons.Default.EditNote,
+                    contentDescription = null,
+                    modifier = Modifier.size(36.dp)
+                )
                 Spacer(modifier = Modifier.width(16.dp))
                 Column {
-                    Text(text = "Enter / Edit Marks", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
-                    Text(text = "Record student scores for exams", style = MaterialTheme.typography.bodySmall.copy(color = Color.White.copy(alpha = 0.8f)))
+                    Text(
+                        text = "Enter / Edit Marks",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                    Text(
+                        text = "Record student scores for exams",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = Color.White.copy(alpha = 0.8f)
+                        )
+                    )
                 }
             }
         }
@@ -4587,19 +5170,34 @@ fun TeacherResultsMenuScreen(
         Spacer(modifier = Modifier.height(16.dp))
 
         IndiumCard(
-            modifier = Modifier.fillMaxWidth().clickable { onViewHistory() },
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onViewHistory() },
             containerColor = Color.White,
             contentColor = Color(0xFF252238)
         ) {
             Row(
-                modifier = Modifier.padding(20.dp).fillMaxWidth(),
+                modifier = Modifier
+                    .padding(20.dp)
+                    .fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(imageVector = Icons.Default.Assignment, contentDescription = null, modifier = Modifier.size(36.dp), tint = Color(0xFF673AB7))
+                Icon(
+                    imageVector = Icons.Default.Assignment,
+                    contentDescription = null,
+                    modifier = Modifier.size(36.dp),
+                    tint = Color(0xFF673AB7)
+                )
                 Spacer(modifier = Modifier.width(16.dp))
                 Column {
-                    Text(text = "Results History", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
-                    Text(text = "View and review previously saved exam records", style = MaterialTheme.typography.bodySmall.copy(color = Color.Gray))
+                    Text(
+                        text = "Results History",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                    Text(
+                        text = "View and review previously saved exam records",
+                        style = MaterialTheme.typography.bodySmall.copy(color = Color.Gray)
+                    )
                 }
             }
         }
@@ -4619,8 +5217,20 @@ fun TeacherResultsEntryScreen(
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val scriptUrl = "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec"
-    val classList = listOf("1st Standard", "2nd Standard", "3rd Standard", "4th Standard", "5th Standard", "6th Standard", "7th Standard", "8th Standard", "9th Standard", "10th Standard")
+    val scriptUrl =
+        "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec"
+    val classList = listOf(
+        "1st Standard",
+        "2nd Standard",
+        "3rd Standard",
+        "4th Standard",
+        "5th Standard",
+        "6th Standard",
+        "7th Standard",
+        "8th Standard",
+        "9th Standard",
+        "10th Standard"
+    )
 
     var selectedClass by remember { mutableStateOf("10th Standard") }
     var showClassMenu by remember { mutableStateOf(false) }
@@ -4641,7 +5251,8 @@ fun TeacherResultsEntryScreen(
         isLoadingStudents = true
         loadError = ""
         try {
-            val studentScriptUrl = "https://script.google.com/macros/s/AKfycbwbBEeUDm0gY_mCuPUJC04sw-O1aWlTTGbyu-x4yhl-BOLbUIoHD4cqWuuS_pNKRSCi/exec"
+            val studentScriptUrl =
+                "https://script.google.com/macros/s/AKfycbwbBEeUDm0gY_mCuPUJC04sw-O1aWlTTGbyu-x4yhl-BOLbUIoHD4cqWuuS_pNKRSCi/exec"
             val standardNumber = selectedClass.filter { it.isDigit() }
             val result = withContext(Dispatchers.IO) {
                 val connection = URL(studentScriptUrl).openConnection() as HttpURLConnection
@@ -4664,16 +5275,20 @@ fun TeacherResultsEntryScreen(
                         val student = studentsArray.getJSONObject(i)
                         val standard = student.optString("standard").trim()
                         if (standard.filter { it.isDigit() } == standardNumber) {
-                            loadedStudents.add(SheetStudent(
-                                rollNo = student.optString("rollNo").trim(),
-                                studentName = student.optString("studentName").trim(),
-                                mobileNo = "",
-                                standard = standard,
-                                board = student.optString("board").trim()
-                            ))
+                            loadedStudents.add(
+                                SheetStudent(
+                                    rollNo = student.optString("rollNo").trim(),
+                                    studentName = student.optString("studentName").trim(),
+                                    mobileNo = "",
+                                    standard = standard,
+                                    board = student.optString("board").trim()
+                                )
+                            )
                         }
                     }
-                    sheetStudents = loadedStudents.sortedBy { it.rollNo.filter { c -> c.isDigit() }.toIntOrNull() ?: 99 }
+                    sheetStudents = loadedStudents.sortedBy {
+                        it.rollNo.filter { c -> c.isDigit() }.toIntOrNull() ?: 99
+                    }
                     marksMap.clear()
                     sheetStudents.forEach { s ->
                         marksMap[s.rollNo] = ""
@@ -4726,16 +5341,26 @@ fun TeacherResultsEntryScreen(
     ) {
         IndiumCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text(text = "Enter Examination Results", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, color = Color(0xFF673AB7)))
+                Text(
+                    text = "Enter Examination Results",
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF673AB7)
+                    )
+                )
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Text("Select Standard", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 Spacer(modifier = Modifier.height(4.dp))
                 Box(modifier = Modifier.fillMaxWidth()) {
                     IndiumOutlinedButton(text = selectedClass, onClick = { showClassMenu = true })
-                    DropdownMenu(expanded = showClassMenu, onDismissRequest = { showClassMenu = false }) {
+                    DropdownMenu(
+                        expanded = showClassMenu,
+                        onDismissRequest = { showClassMenu = false }) {
                         classList.forEach { cls ->
-                            DropdownMenuItem(text = { Text(cls) }, onClick = { selectedClass = cls; showClassMenu = false })
+                            DropdownMenuItem(
+                                text = { Text(cls) },
+                                onClick = { selectedClass = cls; showClassMenu = false })
                         }
                     }
                 }
@@ -4784,30 +5409,60 @@ fun TeacherResultsEntryScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(text = "Students List & Marks Entry", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = Color(0xFF252238)))
+            Text(
+                text = "Students List & Marks Entry",
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF252238)
+                )
+            )
             IconButton(
                 onClick = { if (!isLoadingStudents) retryTrigger++ },
                 enabled = !isLoadingStudents
             ) {
                 if (isLoadingStudents) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color(0xFF7C4DFF), strokeWidth = 2.dp)
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = Color(0xFF7C4DFF),
+                        strokeWidth = 2.dp
+                    )
                 } else {
-                    Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh Students", tint = Color(0xFF7C4DFF))
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Refresh Students",
+                        tint = Color(0xFF7C4DFF)
+                    )
                 }
             }
         }
         Spacer(modifier = Modifier.height(8.dp))
 
         if (isLoadingStudents) {
-            Box(modifier = Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(150.dp),
+                contentAlignment = Alignment.Center
+            ) {
                 CircularProgressIndicator(color = Color(0xFF7C4DFF))
             }
         } else if (loadError.isNotEmpty()) {
             IndiumCard(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(text = "Unable to refresh. Please try again.", color = Color.Red, fontWeight = FontWeight.Bold)
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Unable to refresh. Please try again.",
+                        color = Color.Red,
+                        fontWeight = FontWeight.Bold
+                    )
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(text = loadError, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text(
+                        text = loadError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
                     Spacer(modifier = Modifier.height(12.dp))
                     IndiumButton(
                         text = "RETRY",
@@ -4818,22 +5473,34 @@ fun TeacherResultsEntryScreen(
             }
         } else if (sheetStudents.isEmpty()) {
             IndiumCard(modifier = Modifier.fillMaxWidth()) {
-                Text(text = "No students found for $selectedClass.", modifier = Modifier.padding(16.dp), color = Color.Gray)
+                Text(
+                    text = "No students found for $selectedClass.",
+                    modifier = Modifier.padding(16.dp),
+                    color = Color.Gray
+                )
             }
         } else {
             sheetStudents.forEach { student ->
                 val obtainedVal = marksMap[student.rollNo] ?: ""
                 IndiumCard(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
                     containerColor = Color.White
                 ) {
                     Row(
-                        modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                        modifier = Modifier
+                            .padding(12.dp)
+                            .fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "${student.rollNo}. ${student.studentName}", fontWeight = FontWeight.Bold, color = Color(0xFF252238))
+                            Text(
+                                text = "${student.rollNo}. ${student.studentName}",
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF252238)
+                            )
                         }
                         Spacer(modifier = Modifier.width(12.dp))
                         OutlinedTextField(
@@ -4883,16 +5550,19 @@ fun TeacherResultsEntryScreen(
                         val obtained = obtainedStr.toDoubleOrNull()
                         if (obtained == null || obtained < 0) {
                             hasError = true
-                            errorMsg = "❌ Obtained marks for ${student.studentName} cannot be negative."
+                            errorMsg =
+                                "❌ Obtained marks for ${student.studentName} cannot be negative."
                         } else if (obtained > maxMarksVal) {
                             hasError = true
-                            errorMsg = "❌ Obtained marks for ${student.studentName} ($obtained) cannot exceed Maximum Marks ($maxMarksVal)."
+                            errorMsg =
+                                "❌ Obtained marks for ${student.studentName} ($obtained) cannot exceed Maximum Marks ($maxMarksVal)."
                         }
                     }
                 }
 
                 if (enteredCount == 0) {
-                    saveMessage = "❌ Please enter marks for at least one student before saving records."
+                    saveMessage =
+                        "❌ Please enter marks for at least one student before saving records."
                     return@IndiumButton
                 }
 
@@ -4939,10 +5609,12 @@ fun TeacherResultsEntryScreen(
                                 put("results", resultsArray)
                             }
 
-                            connection.outputStream.bufferedWriter().use { it.write(requestJson.toString()) }
+                            connection.outputStream.bufferedWriter()
+                                .use { it.write(requestJson.toString()) }
 
                             val code = connection.responseCode
-                            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+                            val stream =
+                                if (code in 200..299) connection.inputStream else connection.errorStream
                             stream?.bufferedReader()?.use { it.readText() }
                         }
 
@@ -4951,11 +5623,17 @@ fun TeacherResultsEntryScreen(
                                 val json = JSONObject(response)
                                 if (json.optBoolean("success")) {
                                     val count = json.optInt("savedCount", 0)
-                                    saveMessage = "✅ Successfully saved results for $count students!"
+                                    saveMessage =
+                                        "✅ Successfully saved results for $count students!"
                                     delay(1200)
                                     onSavedSuccess()
                                 } else {
-                                    saveMessage = "❌ Server error: ${json.optString("error", "Failed to save")}"
+                                    saveMessage = "❌ Server error: ${
+                                        json.optString(
+                                            "error",
+                                            "Failed to save"
+                                        )
+                                    }"
                                 }
                             } else {
                                 saveMessage = "❌ Server error: No response received."
@@ -4978,7 +5656,11 @@ fun TeacherResultsEntryScreen(
 
         if (saveMessage.isNotEmpty()) {
             Spacer(modifier = Modifier.height(12.dp))
-            Text(text = saveMessage, fontWeight = FontWeight.Bold, color = if (saveMessage.startsWith("✅")) Color(0xFF4CAF50) else Color.Red)
+            Text(
+                text = saveMessage,
+                fontWeight = FontWeight.Bold,
+                color = if (saveMessage.startsWith("✅")) Color(0xFF4CAF50) else Color.Red
+            )
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -4990,7 +5672,9 @@ fun TeacherResultsEntryScreen(
 @Composable
 fun ResultSubjectItem(subject: String, obtained: String, total: String) {
     Row(
-        modifier = Modifier.padding(vertical = 8.dp).fillMaxWidth(),
+        modifier = Modifier
+            .padding(vertical = 8.dp)
+            .fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -5194,7 +5878,8 @@ fun TeacherResultsHistoryScreen(
                         .groupBy { record ->
                             val std = record["standard"]?.trim().orEmpty()
                             val dateStr = formatTestDate(record["timestamp"]?.trim().orEmpty())
-                            val exam = record["examName"]?.trim()?.takeIf { it.isNotBlank() } ?: "Weekly Class Test"
+                            val exam = record["examName"]?.trim()?.takeIf { it.isNotBlank() }
+                                ?: "Weekly Class Test"
                             "$std|$dateStr|$exam"
                         }
                         .filter { entry ->
@@ -5694,6 +6379,7 @@ fun TeacherTestDetailsScreen(
         Spacer(modifier = Modifier.height(24.dp))
     }
 }
+
 fun formatTestDate(timestamp: String): String {
 
     if (timestamp.isBlank()) {
@@ -5800,8 +6486,14 @@ fun StudyMaterialScreen(
             contentColor = Color.White
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text(text = "Study Material", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
-                Text(text = "Access all your resources here", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    text = "Study Material",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                )
+                Text(
+                    text = "Access all your resources here",
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
         }
 
@@ -5819,12 +6511,17 @@ fun StudyMaterialScreen(
 @Composable
 fun StudyMaterialItem(subject: String, description: String, icon: ImageVector) {
     IndiumCard(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
         containerColor = Color.White
     ) {
         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
-                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFFF0E6FF)),
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFFF0E6FF)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(imageVector = icon, contentDescription = null, tint = Color(0xFF7C4DFF))
@@ -5832,10 +6529,19 @@ fun StudyMaterialItem(subject: String, description: String, icon: ImageVector) {
             Spacer(modifier = Modifier.width(16.dp))
             Column {
                 Text(text = subject, fontWeight = FontWeight.Bold, color = Color(0xFF252238))
-                Text(text = description, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
             }
             Spacer(modifier = Modifier.weight(1f))
-            Icon(imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos, contentDescription = null, tint = Color(0xFFE6DDFB), modifier = Modifier.size(16.dp))
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+                contentDescription = null,
+                tint = Color(0xFFE6DDFB),
+                modifier = Modifier.size(16.dp)
+            )
         }
     }
 }
@@ -5957,7 +6663,7 @@ fun TeacherAttendanceScreen(
     var inTime by remember { mutableStateOf("") }
     var outTime by remember { mutableStateOf("") }
     var attendanceStatus by remember { mutableStateOf("") }
-    
+
     var showHistory by remember { mutableStateOf(false) }
     var historyLoading by remember { mutableStateOf(false) }
     var historyError by remember { mutableStateOf("") }
@@ -5967,7 +6673,8 @@ fun TeacherAttendanceScreen(
         onHistoryStateChange(showHistory)
     }
 
-    val attendanceUrl = "https://script.google.com/macros/s/AKfycbx3vXqB5Vs6DToJp5ArnnbuIGIvBzGwcLJFFUWtDrlBrD7dqLcRj7u89xNrskwPjrgu/exec"
+    val attendanceUrl =
+        "https://script.google.com/macros/s/AKfycbx3vXqB5Vs6DToJp5ArnnbuIGIvBzGwcLJFFUWtDrlBrD7dqLcRj7u89xNrskwPjrgu/exec"
 
     suspend fun loadAttendance() {
         if (mobile.isBlank()) {
@@ -5978,13 +6685,15 @@ fun TeacherAttendanceScreen(
         try {
             val encodedMobile = URLEncoder.encode(mobile, "UTF-8")
             val response = withContext(Dispatchers.IO) {
-                val connection = URL("$attendanceUrl?action=check&mobile=$encodedMobile").openConnection() as HttpURLConnection
+                val connection =
+                    URL("$attendanceUrl?action=check&mobile=$encodedMobile").openConnection() as HttpURLConnection
                 connection.requestMethod = "GET"
                 connection.connectTimeout = 15000
                 connection.readTimeout = 15000
                 try {
                     val code = connection.responseCode
-                    if (code == 200) connection.inputStream.bufferedReader().use { it.readText() } else null
+                    if (code == 200) connection.inputStream.bufferedReader()
+                        .use { it.readText() } else null
                 } finally {
                     connection.disconnect()
                 }
@@ -6014,7 +6723,7 @@ fun TeacherAttendanceScreen(
         try {
             val encodedMobile = URLEncoder.encode(mobile, "UTF-8")
             val urlString = "$attendanceUrl?action=history&mobile=$encodedMobile"
-            
+
             val response = withContext(Dispatchers.IO) {
                 // Return to a very basic HttpURLConnection logic, similar to working loadAttendance()
                 // GAS history is currently failing with 404/Server unreachable.
@@ -6023,7 +6732,7 @@ fun TeacherAttendanceScreen(
                 connection.connectTimeout = 15000
                 connection.readTimeout = 15000
                 connection.instanceFollowRedirects = true
-                
+
                 try {
                     val code = connection.responseCode
                     if (code == 200) {
@@ -6051,25 +6760,31 @@ fun TeacherAttendanceScreen(
                     connection.disconnect()
                 }
             }
-            
+
             if (response != null && !response.startsWith("HTTP_") && !response.startsWith("ERR_")) {
                 val json = JSONObject(response)
                 if (json.optBoolean("success")) {
-                    val arr = json.optJSONArray("records") ?: json.optJSONArray("history") ?: JSONArray()
+                    val arr =
+                        json.optJSONArray("records") ?: json.optJSONArray("history") ?: JSONArray()
                     val result = mutableListOf<TeacherAttendanceRecord>()
                     for (i in 0 until arr.length()) {
                         val obj = arr.getJSONObject(i)
-                        result.add(TeacherAttendanceRecord(
-                            date = obj.optString("date"),
-                            teacherName = obj.optString("teacherName"),
-                            inTime = obj.optString("inTime"),
-                            outTime = obj.optString("outTime"),
-                            status = obj.optString("status")
-                        ))
+                        result.add(
+                            TeacherAttendanceRecord(
+                                date = obj.optString("date"),
+                                teacherName = obj.optString("teacherName"),
+                                inTime = obj.optString("inTime"),
+                                outTime = obj.optString("outTime"),
+                                status = obj.optString("status")
+                            )
+                        )
                     }
                     historyList = result.reversed()
                 } else {
-                    historyError = json.optString("error", "The backend script does not support the 'history' action yet.")
+                    historyError = json.optString(
+                        "error",
+                        "The backend script does not support the 'history' action yet."
+                    )
                 }
             } else {
                 historyError = if (response?.startsWith("HTTP_404") == true) {
@@ -6100,7 +6815,8 @@ fun TeacherAttendanceScreen(
                 connection.outputStream.bufferedWriter().use { it.write(requestJson.toString()) }
                 try {
                     val code = connection.responseCode
-                    if (code == 200) connection.inputStream.bufferedReader().use { it.readText() } else null
+                    if (code == 200) connection.inputStream.bufferedReader()
+                        .use { it.readText() } else null
                 } finally {
                     connection.disconnect()
                 }
@@ -6143,9 +6859,15 @@ fun TeacherAttendanceScreen(
                 } else if (historyError.isNotEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(text = historyError, color = Color.Red, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = historyError,
+                                color = Color.Red,
+                                fontWeight = FontWeight.Bold
+                            )
                             Spacer(modifier = Modifier.height(16.dp))
-                            IndiumButton(text = "RETRY", onClick = { scope.launch { loadHistory() } })
+                            IndiumButton(
+                                text = "RETRY",
+                                onClick = { scope.launch { loadHistory() } })
                         }
                     }
                 } else if (historyList.isEmpty()) {
@@ -6168,14 +6890,27 @@ fun TeacherAttendanceScreen(
                                             color = Color(0xFF252238)
                                         )
                                         Surface(
-                                            color = if (record.status.contains("PRESENT", true)) Color(0xFF4CAF50).copy(alpha = 0.1f) else Color.Red.copy(alpha = 0.1f),
+                                            color = if (record.status.contains(
+                                                    "PRESENT",
+                                                    true
+                                                )
+                                            ) Color(0xFF4CAF50).copy(alpha = 0.1f) else Color.Red.copy(
+                                                alpha = 0.1f
+                                            ),
                                             shape = RoundedCornerShape(4.dp)
                                         ) {
                                             Text(
                                                 text = record.status,
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                modifier = Modifier.padding(
+                                                    horizontal = 8.dp,
+                                                    vertical = 4.dp
+                                                ),
                                                 style = MaterialTheme.typography.labelSmall,
-                                                color = if (record.status.contains("PRESENT", true)) Color(0xFF4CAF50) else Color.Red,
+                                                color = if (record.status.contains(
+                                                        "PRESENT",
+                                                        true
+                                                    )
+                                                ) Color(0xFF4CAF50) else Color.Red,
                                                 fontWeight = FontWeight.Bold
                                             )
                                         }
@@ -6183,12 +6918,26 @@ fun TeacherAttendanceScreen(
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Row(modifier = Modifier.fillMaxWidth()) {
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text(text = "IN Time", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                                            Text(text = record.inTime.ifBlank { "--:--" }, fontWeight = FontWeight.Medium)
+                                            Text(
+                                                text = "IN Time",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color.Gray
+                                            )
+                                            Text(
+                                                text = record.inTime.ifBlank { "--:--" },
+                                                fontWeight = FontWeight.Medium
+                                            )
                                         }
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text(text = "OUT Time", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                                            Text(text = record.outTime.ifBlank { "--:--" }, fontWeight = FontWeight.Medium)
+                                            Text(
+                                                text = "OUT Time",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color.Gray
+                                            )
+                                            Text(
+                                                text = record.outTime.ifBlank { "--:--" },
+                                                fontWeight = FontWeight.Medium
+                                            )
                                         }
                                     }
                                 }
@@ -6198,7 +6947,7 @@ fun TeacherAttendanceScreen(
                 }
             }
         }
-        
+
         // Load history once when showing
         LaunchedEffect(showHistory) {
             if (showHistory && historyList.isEmpty()) {
@@ -6221,10 +6970,16 @@ fun TeacherAttendanceScreen(
             contentColor = Color.White
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
-                Text(text = "Mark Attendance", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
+                Text(
+                    text = "Mark Attendance",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                )
                 Text(text = "Teacher: $teacherName", style = MaterialTheme.typography.bodyMedium)
                 Spacer(modifier = Modifier.height(20.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
                     AttendanceStatItem("Status", attendanceStatus.ifBlank { "ABSENT" })
                     AttendanceStatItem("IN", inTime.ifBlank { "--:--" })
                     AttendanceStatItem("OUT", outTime.ifBlank { "--:--" })
@@ -6247,9 +7002,9 @@ fun TeacherAttendanceScreen(
             enabled = !loading && attendanceStatus == "PRESENT" && outTime.isBlank(),
             containerColor = Color(0xFF673AB7)
         )
-        
+
         Spacer(modifier = Modifier.height(24.dp))
-        
+
         IndiumOutlinedButton(
             text = "My Attendance History",
             onClick = { showHistory = true }
@@ -6258,7 +7013,12 @@ fun TeacherAttendanceScreen(
         if (message.isNotBlank()) {
             Spacer(modifier = Modifier.height(16.dp))
             IndiumCard(modifier = Modifier.fillMaxWidth()) {
-                Text(text = message, modifier = Modifier.padding(16.dp), color = Color(0xFF673AB7), fontWeight = FontWeight.Bold)
+                Text(
+                    text = message,
+                    modifier = Modifier.padding(16.dp),
+                    color = Color(0xFF673AB7),
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
 
@@ -6293,7 +7053,18 @@ fun AttendanceHistoryScreen(
 ) {
 
     val context = LocalContext.current
-    val classList = listOf("1st Standard", "2nd Standard", "3rd Standard", "4th Standard", "5th Standard", "6th Standard", "7th Standard", "8th Standard", "9th Standard", "10th Standard")
+    val classList = listOf(
+        "1st Standard",
+        "2nd Standard",
+        "3rd Standard",
+        "4th Standard",
+        "5th Standard",
+        "6th Standard",
+        "7th Standard",
+        "8th Standard",
+        "9th Standard",
+        "10th Standard"
+    )
 
     var historyClass by remember { mutableStateOf(selectedClass) }
     var showHistoryClassMenu by remember { mutableStateOf(false) }
@@ -6435,8 +7206,8 @@ fun AttendanceHistoryScreen(
                         key,
                         true
                     )
-            student to present
-        }
+                student to present
+            }
         } else {
 
             emptyList()
@@ -6912,8 +7683,7 @@ fun AttendanceHistoryScreen(
                     }
                 ) {
 
-                    students.forEach {
-                            student ->
+                    students.forEach { student ->
 
                         DropdownMenuItem(
 
@@ -7059,8 +7829,7 @@ fun AttendanceHistoryScreen(
                             .fillMaxWidth()
                 ) {
 
-                    items(studentHistory) {
-                            item ->
+                    items(studentHistory) { item ->
 
                         val dateString =
                             item.first
@@ -7154,12 +7923,36 @@ object StudentRosterCache {
 fun StudentAttendanceForTeacherScreen(
     onBack: () -> Unit
 ) {
+    BackHandler {
+        onBack()
+    }
+
     val context = LocalContext.current
 
-    val scriptUrl = "https://script.google.com/macros/s/AKfycbwbBEeUDm0gY_mCuPUJC04sw-O1aWlTTGbyu-x4yhl-BOLbUIoHD4cqWuuS_pNKRSCi/exec"
-    val classList = listOf("1st Standard", "2nd Standard", "3rd Standard", "4th Standard", "5th Standard", "6th Standard", "7th Standard", "8th Standard", "9th Standard", "10th Standard")
+
+    val scriptUrl =
+        "https://script.google.com/macros/s/AKfycbwbBEeUDm0gY_mCuPUJC04sw-O1aWlTTGbyu-x4yhl-BOLbUIoHD4cqWuuS_pNKRSCi/exec"
+    val classList = listOf(
+        "1st Standard",
+        "2nd Standard",
+        "3rd Standard",
+        "4th Standard",
+        "5th Standard",
+        "6th Standard",
+        "7th Standard",
+        "8th Standard",
+        "9th Standard",
+        "10th Standard"
+    )
     var selectedClass by remember { mutableStateOf("10th Standard") }
-    var selectedDate by remember { mutableStateOf(SimpleDateFormat("d MMMM yyyy", Locale.ENGLISH).format(Date())) }
+    var selectedDate by remember {
+        mutableStateOf(
+            SimpleDateFormat(
+                "d MMMM yyyy",
+                Locale.ENGLISH
+            ).format(Date())
+        )
+    }
     var showClassMenu by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
     var saveMessage by remember { mutableStateOf("") }
@@ -7170,7 +7963,8 @@ fun StudentAttendanceForTeacherScreen(
     var refreshTrigger by remember { mutableIntStateOf(0) }
     var showHistory by remember { mutableStateOf(false) }
 
-    val preferences = remember { context.getSharedPreferences("student_attendance", Context.MODE_PRIVATE) }
+    val preferences =
+        remember { context.getSharedPreferences("student_attendance", Context.MODE_PRIVATE) }
     val attendance = remember { mutableStateMapOf<String, Boolean>() }
 
     val sheetStudents = remember(allStudents, selectedClass) {
@@ -7211,7 +8005,8 @@ fun StudentAttendanceForTeacherScreen(
                 connection.requestMethod = "GET"
                 connection.connectTimeout = 20000
                 connection.readTimeout = 20000
-                if (connection.responseCode == 200) connection.inputStream.bufferedReader().use { it.readText() } else null
+                if (connection.responseCode == 200) connection.inputStream.bufferedReader()
+                    .use { it.readText() } else null
             }
             if (result != null) {
                 val json = JSONObject(result)
@@ -7221,13 +8016,15 @@ fun StudentAttendanceForTeacherScreen(
                     for (i in 0 until studentsArray.length()) {
                         val student = studentsArray.getJSONObject(i)
                         val standard = student.optString("standard").trim()
-                        loadedStudents.add(SheetStudent(
-                            rollNo = student.optString("rollNo").trim(),
-                            studentName = student.optString("studentName").trim(),
-                            mobileNo = "", // Privacy: Do not fetch student mobile numbers for teachers
-                            standard = standard,
-                            board = student.optString("board").trim()
-                        ))
+                        loadedStudents.add(
+                            SheetStudent(
+                                rollNo = student.optString("rollNo").trim(),
+                                studentName = student.optString("studentName").trim(),
+                                mobileNo = "", // Privacy: Do not fetch student mobile numbers for teachers
+                                standard = standard,
+                                board = student.optString("board").trim()
+                            )
+                        )
                     }
                     allStudents = loadedStudents
                     StudentRosterCache.students = loadedStudents
@@ -7282,16 +8079,31 @@ fun StudentAttendanceForTeacherScreen(
         ) {
             IndiumCard(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Box(modifier = Modifier.weight(1f)) {
-                            IndiumOutlinedButton(text = selectedClass, onClick = { showClassMenu = true })
-                            DropdownMenu(expanded = showClassMenu, onDismissRequest = { showClassMenu = false }) {
+                            IndiumOutlinedButton(
+                                text = selectedClass,
+                                onClick = { showClassMenu = true })
+                            DropdownMenu(
+                                expanded = showClassMenu,
+                                onDismissRequest = { showClassMenu = false }) {
                                 classList.forEach { className ->
-                                    DropdownMenuItem(text = { Text(className) }, onClick = { selectedClass = className; showClassMenu = false })
+                                    DropdownMenuItem(
+                                        text = { Text(className) },
+                                        onClick = {
+                                            selectedClass = className; showClassMenu = false
+                                        })
                                 }
                             }
                         }
-                        IndiumOutlinedButton(text = selectedDate, onClick = { showDatePicker = true }, modifier = Modifier.weight(1f))
+                        IndiumOutlinedButton(
+                            text = selectedDate,
+                            onClick = { showDatePicker = true },
+                            modifier = Modifier.weight(1f)
+                        )
                     }
                 }
             }
@@ -7309,25 +8121,57 @@ fun StudentAttendanceForTeacherScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                IndiumButton(text = "ALL PRESENT", onClick = { sheetStudents.forEach { attendance[it.studentName] = true } }, modifier = Modifier.weight(1f), containerColor = Color(0xFF4CAF50))
-                IndiumButton(text = "ALL ABSENT", onClick = { sheetStudents.forEach { attendance[it.studentName] = false } }, modifier = Modifier.weight(1f), containerColor = Color(0xFFF44336))
+                IndiumButton(
+                    text = "ALL PRESENT",
+                    onClick = { sheetStudents.forEach { attendance[it.studentName] = true } },
+                    modifier = Modifier.weight(1f),
+                    containerColor = Color(0xFF4CAF50)
+                )
+                IndiumButton(
+                    text = "ALL ABSENT",
+                    onClick = { sheetStudents.forEach { attendance[it.studentName] = false } },
+                    modifier = Modifier.weight(1f),
+                    containerColor = Color(0xFFF44336)
+                )
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
             if (isLoading) {
-                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) { CircularProgressIndicator() }
             } else {
-                val filtered = sheetStudents.filter { it.studentName.contains(searchText, ignoreCase = true) }
-                LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                val filtered =
+                    sheetStudents.filter { it.studentName.contains(searchText, ignoreCase = true) }
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     items(filtered) { student ->
                         val isPresent = attendance[student.studentName] ?: true
                         IndiumCard(modifier = Modifier.fillMaxWidth()) {
-                            Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(text = "${student.rollNo}. ${student.studentName}", fontWeight = FontWeight.Bold)
+                                    Text(
+                                        text = "${student.rollNo}. ${student.studentName}",
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
-                                Switch(checked = isPresent, onCheckedChange = { attendance[student.studentName] = it }, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF4CAF50)))
+                                Switch(
+                                    checked = isPresent,
+                                    onCheckedChange = { attendance[student.studentName] = it },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color.White,
+                                        checkedTrackColor = Color(0xFF4CAF50)
+                                    )
+                                )
                             }
                         }
                     }
@@ -7338,7 +8182,8 @@ fun StudentAttendanceForTeacherScreen(
 
             var isSavingAttendance by remember { mutableStateOf(false) }
             val scope = rememberCoroutineScope()
-            val attendanceUrl = "https://script.google.com/macros/s/AKfycbx3vXqB5Vs6DToJp5ArnnbuIGIvBzGwcLJFFUWtDrlBrD7dqLcRj7u89xNrskwPjrgu/exec"
+            val attendanceUrl =
+                "https://script.google.com/macros/s/AKfycbx3vXqB5Vs6DToJp5ArnnbuIGIvBzGwcLJFFUWtDrlBrD7dqLcRj7u89xNrskwPjrgu/exec"
 
             IndiumButton(
                 text = if (isSavingAttendance) "SAVING..." else "SAVE ATTENDANCE",
@@ -7348,10 +8193,13 @@ fun StudentAttendanceForTeacherScreen(
                     // 1. Local SharedPreferences Save (Preserved 100%)
                     val editor = preferences.edit()
                     sheetStudents.forEach { student ->
-                        val key = "$selectedClass-$selectedDate-${student.rollNo}-${student.studentName}"
+                        val key =
+                            "$selectedClass-$selectedDate-${student.rollNo}-${student.studentName}"
                         editor.putBoolean(key, attendance[student.studentName] ?: true)
                     }
-                    val savedDates = preferences.getStringSet("attendance_dates_$selectedClass", emptySet())?.toMutableSet() ?: mutableSetOf()
+                    val savedDates =
+                        preferences.getStringSet("attendance_dates_$selectedClass", emptySet())
+                            ?.toMutableSet() ?: mutableSetOf()
                     savedDates.add(selectedDate)
                     editor.putStringSet("attendance_dates_$selectedClass", savedDates).apply()
 
@@ -7362,13 +8210,17 @@ fun StudentAttendanceForTeacherScreen(
                     scope.launch {
                         try {
                             val response = withContext(Dispatchers.IO) {
-                                val connection = URL(attendanceUrl).openConnection() as HttpURLConnection
+                                val connection =
+                                    URL(attendanceUrl).openConnection() as HttpURLConnection
                                 connection.requestMethod = "POST"
                                 connection.doOutput = true
                                 connection.connectTimeout = 20000
                                 connection.readTimeout = 20000
                                 connection.instanceFollowRedirects = true
-                                connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                                connection.setRequestProperty(
+                                    "Content-Type",
+                                    "application/json; charset=UTF-8"
+                                )
 
                                 val recordsArray = JSONArray()
                                 sheetStudents.forEach { student ->
@@ -7394,7 +8246,8 @@ fun StudentAttendanceForTeacherScreen(
                                 }
 
                                 val responseCode = connection.responseCode
-                                val stream = if (responseCode in 200..299) connection.inputStream else connection.errorStream
+                                val stream =
+                                    if (responseCode in 200..299) connection.inputStream else connection.errorStream
                                 stream?.bufferedReader()?.use { it.readText() }
                             }
 
@@ -7407,10 +8260,12 @@ fun StudentAttendanceForTeacherScreen(
                                     saveMessage = "⚠️ Saved locally, but cloud sync failed: $err"
                                 }
                             } else {
-                                saveMessage = "⚠️ Saved locally, but cloud sync failed. Please try again."
+                                saveMessage =
+                                    "⚠️ Saved locally, but cloud sync failed. Please try again."
                             }
                         } catch (e: Exception) {
-                            saveMessage = "⚠️ Saved locally, but cloud sync failed: ${e.localizedMessage}"
+                            saveMessage =
+                                "⚠️ Saved locally, but cloud sync failed: ${e.localizedMessage}"
                         } finally {
                             isSavingAttendance = false
                         }
@@ -7419,23 +8274,37 @@ fun StudentAttendanceForTeacherScreen(
                 enabled = !isSavingAttendance,
                 containerColor = Color(0xFF673AB7)
             )
-            
-            TextButton(onClick = { showHistory = true }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("VIEW HISTORY", color = Color(0xFF7C4DFF), fontWeight = FontWeight.Bold) }
-            
+
+            TextButton(
+                onClick = { showHistory = true },
+                modifier = Modifier.align(Alignment.CenterHorizontally)
+            ) { Text("VIEW HISTORY", color = Color(0xFF7C4DFF), fontWeight = FontWeight.Bold) }
+
             if (saveMessage.isNotEmpty()) {
-                Text(text = saveMessage, modifier = Modifier.align(Alignment.CenterHorizontally), color = Color(0xFF4CAF50), fontWeight = FontWeight.Bold)
+                Text(
+                    text = saveMessage,
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                    color = Color(0xFF4CAF50),
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }
 
     if (showDatePicker) {
         val calendar = Calendar.getInstance()
-        DatePickerDialog(context, { _, y, m, d ->
-            val cal = Calendar.getInstance()
-            cal.set(y, m, d)
-            selectedDate = SimpleDateFormat("d MMMM yyyy", Locale.ENGLISH).format(cal.time)
-            showDatePicker = false
-        }, calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH)).show()
+        DatePickerDialog(
+            context,
+            { _, y, m, d ->
+                val cal = Calendar.getInstance()
+                cal.set(y, m, d)
+                selectedDate = SimpleDateFormat("d MMMM yyyy", Locale.ENGLISH).format(cal.time)
+                showDatePicker = false
+            },
+            calendar.get(Calendar.YEAR),
+            calendar.get(Calendar.MONTH),
+            calendar.get(Calendar.DAY_OF_MONTH)
+        ).show()
     }
 }
 
@@ -7506,16 +8375,87 @@ fun addTeacherToFirebase(
             )
         }
 }
+
+fun updateTeacherPasswordInFirebase(
+    mobile: String,
+    temporaryPassword: String,
+    onResult: (Boolean, String) -> Unit
+) {
+    val db = FirebaseFirestore.getInstance()
+
+    if (mobile.isBlank() || temporaryPassword.isBlank()) {
+        onResult(false, "Please fill all fields")
+        return
+    }
+
+    db.collection("users")
+        .whereEqualTo("mobile", mobile)
+        .whereEqualTo("role", "Teacher")
+        .get()
+        .addOnSuccessListener { documents ->
+            if (documents.isEmpty) {
+                onResult(false, "Teacher account not found")
+            } else {
+                val doc = documents.documents[0]
+                doc.reference.update(
+                    mapOf(
+                        "password" to temporaryPassword,
+                        "firstLogin" to true
+                    )
+                ).addOnSuccessListener {
+                    onResult(true, "Teacher password updated successfully!")
+                }.addOnFailureListener { error ->
+                    onResult(false, error.message ?: "Failed to update password")
+                }
+            }
+        }
+        .addOnFailureListener { error ->
+            onResult(false, error.message ?: "Database query error")
+        }
+}
+
 @Composable
 fun AddTeacherScreen(
     onBack: () -> Unit
 ) {
+    var selectedOption by remember { mutableStateOf("EXISTING") } // "EXISTING" or "NEW"
+
     var teacherName by remember { mutableStateOf("") }
     var mobile by remember { mutableStateOf("") }
     var temporaryPassword by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
     var isSaving by remember { mutableStateOf(false) }
+
+    // Existing Teacher Selection State
+    var existingTeachers by remember { mutableStateOf<List<TeacherRecord>>(emptyList()) }
+    var isLoadingTeachers by remember { mutableStateOf(false) }
+    var showTeacherDropdown by remember { mutableStateOf(false) }
+    var teacherSearchText by remember { mutableStateOf("") }
+
+    LaunchedEffect(selectedOption) {
+        if (selectedOption == "EXISTING") {
+            isLoadingTeachers = true
+            FirebaseFirestore.getInstance().collection("users")
+                .whereEqualTo("role", "Teacher")
+                .get()
+                .addOnSuccessListener { documents ->
+                    val loaded = documents.map { doc ->
+                        TeacherRecord(
+                            name = doc.getString("name") ?: "Unknown",
+                            mobile = doc.getString("mobile") ?: "",
+                            subject = doc.getString("subject") ?: ""
+                        )
+                    }.sortedBy { it.name }
+                    existingTeachers = loaded
+                    isLoadingTeachers = false
+                }
+                .addOnFailureListener { e ->
+                    message = "Error loading teachers: ${e.message}"
+                    isLoadingTeachers = false
+                }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -7527,33 +8467,157 @@ fun AddTeacherScreen(
         IndiumCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text(
-                    text = "Add New Teacher",
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, color = Color(0xFF673AB7))
+                    text = "Add / Update Teacher Login",
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF673AB7)
+                    )
                 )
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Toggle Row
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    Button(
+                        onClick = {
+                            selectedOption = "EXISTING"
+                            message = ""
+                            teacherName = ""
+                            mobile = ""
+                            temporaryPassword = ""
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (selectedOption == "EXISTING") Color(0xFF673AB7) else Color.LightGray
+                        )
+                    ) {
+                        Text("EXISTING TEACHER", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            selectedOption = "NEW"
+                            message = ""
+                            teacherName = ""
+                            mobile = ""
+                            temporaryPassword = ""
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (selectedOption == "NEW") Color(0xFF673AB7) else Color.LightGray
+                        )
+                    ) {
+                        Text("NEW TEACHER", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(20.dp))
-                
+
+                if (selectedOption == "EXISTING") {
+                    Text(
+                        text = "1. Select Existing Teacher",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = Color(0xFF252238)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    if (isLoadingTeachers) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.padding(8.dp),
+                            color = Color(0xFF7C4DFF)
+                        )
+                    } else {
+                        OutlinedTextField(
+                            value = teacherSearchText,
+                            onValueChange = {
+                                teacherSearchText = it
+                                showTeacherDropdown = true
+                            },
+                            label = { Text(if (teacherName.isBlank()) "Search / Select Teacher" else "Selected: $teacherName") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            trailingIcon = {
+                                IconButton(onClick = { showTeacherDropdown = !showTeacherDropdown }) {
+                                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Dropdown")
+                                }
+                            }
+                        )
+
+                        DropdownMenu(
+                            expanded = showTeacherDropdown,
+                            onDismissRequest = { showTeacherDropdown = false },
+                            modifier = Modifier.fillMaxWidth(0.85f)
+                        ) {
+                            val filtered = existingTeachers.filter {
+                                it.name.contains(teacherSearchText, ignoreCase = true) ||
+                                        it.mobile.contains(teacherSearchText)
+                            }
+                            if (filtered.isEmpty()) {
+                                DropdownMenuItem(
+                                    text = { Text("No teachers found", color = Color.Gray) },
+                                    onClick = { showTeacherDropdown = false }
+                                )
+                            } else {
+                                filtered.forEach { teacher ->
+                                    DropdownMenuItem(
+                                        text = { Text("${teacher.name} (${teacher.mobile})") },
+                                        onClick = {
+                                            teacherName = teacher.name
+                                            mobile = teacher.mobile
+                                            teacherSearchText = teacher.name
+                                            showTeacherDropdown = false
+                                            message = "Selected Teacher: ${teacher.name}"
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "2. Teacher Details (Read-Only)",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = Color(0xFF252238)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
+
                 OutlinedTextField(
                     value = teacherName,
-                    onValueChange = { teacherName = it },
+                    onValueChange = { if (selectedOption == "NEW") teacherName = it },
                     label = { Text("Teacher Name") },
+                    enabled = selectedOption == "NEW",
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        disabledTextColor = Color.Black,
+                        disabledLabelColor = Color.DarkGray
+                    )
                 )
                 Spacer(modifier = Modifier.height(12.dp))
-                
+
                 OutlinedTextField(
                     value = mobile,
-                    onValueChange = { mobile = it },
+                    onValueChange = { if (selectedOption == "NEW") mobile = it },
                     label = { Text("Mobile Number") },
+                    enabled = selectedOption == "NEW",
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        disabledTextColor = Color.Black,
+                        disabledLabelColor = Color.DarkGray
+                    )
                 )
                 Spacer(modifier = Modifier.height(12.dp))
-                
+
                 OutlinedTextField(
                     value = temporaryPassword,
-                    onValueChange = { if (it.length <= 4 && it.all { c -> c.isDigit() }) temporaryPassword = it },
+                    onValueChange = {
+                        if (it.length <= 4 && it.all { c -> c.isDigit() }) temporaryPassword = it
+                    },
                     label = { Text("Temporary Password (4 Digits)") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
@@ -7561,23 +8625,47 @@ fun AddTeacherScreen(
                     visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
                         IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                            Icon(imageVector = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff, contentDescription = null)
+                            Icon(
+                                imageVector = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = null
+                            )
                         }
                     },
                     shape = RoundedCornerShape(12.dp)
                 )
-                
+
                 Spacer(modifier = Modifier.height(24.dp))
-                
+
                 IndiumButton(
-                    text = if (isSaving) "CREATING..." else "CREATE TEACHER ACCOUNT",
+                    text = if (isSaving) "PROCESSING..." else if (selectedOption == "EXISTING") "UPDATE TEACHER PASSWORD" else "CREATE TEACHER ACCOUNT",
                     onClick = {
-                        if (temporaryPassword.length != 4) { message = "Password must be 4 digits"; return@IndiumButton }
+                        if (teacherName.isBlank() || mobile.isBlank()) {
+                            message = "Please select or enter a teacher."; return@IndiumButton
+                        }
+                        if (temporaryPassword.length != 4) {
+                            message = "Password must be 4 digits"; return@IndiumButton
+                        }
                         isSaving = true
-                        addTeacherToFirebase(teacherName, mobile, temporaryPassword) { success, res ->
-                            isSaving = false
-                            message = res
-                            if (success) { teacherName = ""; mobile = ""; temporaryPassword = "" }
+                        if (selectedOption == "EXISTING") {
+                            updateTeacherPasswordInFirebase(mobile, temporaryPassword) { success, res ->
+                                isSaving = false
+                                message = res
+                                if (success) {
+                                    temporaryPassword = ""
+                                }
+                            }
+                        } else {
+                            addTeacherToFirebase(
+                                teacherName,
+                                mobile,
+                                temporaryPassword
+                            ) { success, res ->
+                                isSaving = false
+                                message = res
+                                if (success) {
+                                    teacherName = ""; mobile = ""; temporaryPassword = ""
+                                }
+                            }
                         }
                     },
                     enabled = !isSaving,
@@ -7589,7 +8677,12 @@ fun AddTeacherScreen(
         if (message.isNotEmpty()) {
             Spacer(modifier = Modifier.height(16.dp))
             IndiumCard(modifier = Modifier.fillMaxWidth()) {
-                Text(text = message, modifier = Modifier.padding(16.dp), color = Color(0xFF673AB7), fontWeight = FontWeight.Bold)
+                Text(
+                    text = message,
+                    modifier = Modifier.padding(16.dp),
+                    color = Color(0xFF673AB7),
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
 
@@ -7652,9 +8745,9 @@ fun addStudentToFirebase(
 fun AddStudentScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    
+
     var selectedOption by remember { mutableStateOf("EXISTING") } // "EXISTING" or "NEW"
-    
+
     // Shared state
     var studentName by remember { mutableStateOf("") }
     var mobile by remember { mutableStateOf("") }
@@ -7664,11 +8757,11 @@ fun AddStudentScreen(onBack: () -> Unit) {
     var board by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var temporaryPassword by remember { mutableStateOf("") }
-    
+
     var passwordVisible by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
     var isSaving by remember { mutableStateOf(false) }
-    
+
     // Option 1: Existing Student state
     var selectedClassForExisting by remember { mutableStateOf("10th Standard") }
     var showClassMenu by remember { mutableStateOf(false) }
@@ -7676,7 +8769,8 @@ fun AddStudentScreen(onBack: () -> Unit) {
     var isLoadingStudents by remember { mutableStateOf(false) }
     var searchText by remember { mutableStateOf("") }
 
-    val scriptUrl = "https://script.google.com/macros/s/AKfycbwbBEeUDm0gY_mCuPUJC04sw-O1aWlTTGbyu-x4yhl-BOLbUIoHD4cqWuuS_pNKRSCi/exec"
+    val scriptUrl =
+        "https://script.google.com/macros/s/AKfycbwbBEeUDm0gY_mCuPUJC04sw-O1aWlTTGbyu-x4yhl-BOLbUIoHD4cqWuuS_pNKRSCi/exec"
 
     val classList = listOf(
         "1st Standard", "2nd Standard", "3rd Standard", "4th Standard", "5th Standard",
@@ -7704,16 +8798,20 @@ fun AddStudentScreen(onBack: () -> Unit) {
                         val item = array.getJSONObject(i)
                         val std = item.optString("standard")
                         if (std.filter { it.isDigit() } == standardNumber) {
-                            loaded.add(SheetStudent(
-                                rollNo = item.optString("rollNo"),
-                                studentName = item.optString("studentName"),
-                                mobileNo = item.optString("mobileNo"),
-                                standard = std,
-                                board = item.optString("board")
-                            ))
+                            loaded.add(
+                                SheetStudent(
+                                    rollNo = item.optString("rollNo"),
+                                    studentName = item.optString("studentName"),
+                                    mobileNo = item.optString("mobileNo"),
+                                    standard = std,
+                                    board = item.optString("board")
+                                )
+                            )
                         }
                     }
-                    sheetStudents = loaded.sortedBy { it.rollNo.filter { c -> c.isDigit() }.toIntOrNull() ?: 999 }
+                    sheetStudents = loaded.sortedBy {
+                        it.rollNo.filter { c -> c.isDigit() }.toIntOrNull() ?: 999
+                    }
                 }
             } catch (e: Exception) {
                 message = "Error loading students: ${e.message}"
@@ -7742,7 +8840,10 @@ fun AddStudentScreen(onBack: () -> Unit) {
             ) { Text("EXISTING STUDENT") }
             Spacer(Modifier.width(8.dp))
             Button(
-                onClick = { selectedOption = "NEW"; message = ""; studentName = ""; mobile = ""; className = ""; division = ""; rollNo = ""; board = ""; username = "" },
+                onClick = {
+                    selectedOption = "NEW"; message = ""; studentName = ""; mobile = ""; className =
+                    ""; division = ""; rollNo = ""; board = ""; username = ""
+                },
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (selectedOption == "NEW") MaterialTheme.colorScheme.primary else Color.LightGray
@@ -7756,17 +8857,24 @@ fun AddStudentScreen(onBack: () -> Unit) {
             // Existing Student selection UI
             Text("1. Select Class", fontWeight = FontWeight.Bold)
             Box(modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = { showClassMenu = true }, modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = { showClassMenu = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Text(selectedClassForExisting)
                 }
-                DropdownMenu(expanded = showClassMenu, onDismissRequest = { showClassMenu = false }) {
+                DropdownMenu(
+                    expanded = showClassMenu,
+                    onDismissRequest = { showClassMenu = false }) {
                     classList.forEach { cls ->
-                        DropdownMenuItem(text = { Text(cls) }, onClick = { selectedClassForExisting = cls; showClassMenu = false })
+                        DropdownMenuItem(
+                            text = { Text(cls) },
+                            onClick = { selectedClassForExisting = cls; showClassMenu = false })
                     }
                 }
             }
             Spacer(Modifier.height(10.dp))
-            
+
             Text("2. Search & Select Student", fontWeight = FontWeight.Bold)
             OutlinedTextField(
                 value = searchText,
@@ -7774,26 +8882,46 @@ fun AddStudentScreen(onBack: () -> Unit) {
                 label = { Text("Search by name") },
                 modifier = Modifier.fillMaxWidth()
             )
-            
+
             if (isLoadingStudents) {
-                CircularProgressIndicator(modifier = Modifier.padding(16.dp).align(Alignment.CenterHorizontally))
+                CircularProgressIndicator(
+                    modifier = Modifier
+                        .padding(16.dp)
+                        .align(Alignment.CenterHorizontally)
+                )
             } else {
-                Box(modifier = Modifier.heightIn(max = 250.dp).fillMaxWidth().padding(vertical = 8.dp)) {
-                    val filtered = sheetStudents.filter { it.studentName.contains(searchText, ignoreCase = true) }
+                Box(
+                    modifier = Modifier
+                        .heightIn(max = 250.dp)
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp)
+                ) {
+                    val filtered = sheetStudents.filter {
+                        it.studentName.contains(
+                            searchText,
+                            ignoreCase = true
+                        )
+                    }
                     LazyColumn(modifier = Modifier.fillMaxWidth()) {
                         items(filtered) { student ->
                             Card(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable {
-                                    studentName = student.studentName
-                                    mobile = student.mobileNo
-                                    className = student.standard
-                                    rollNo = student.rollNo
-                                    board = student.board
-                                    username = student.mobileNo // Default username to mobile
-                                    message = "Selected: ${student.studentName}"
-                                }
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                                    .clickable {
+                                        studentName = student.studentName
+                                        mobile = student.mobileNo
+                                        className = student.standard
+                                        rollNo = student.rollNo
+                                        board = student.board
+                                        username = student.mobileNo // Default username to mobile
+                                        message = "Selected: ${student.studentName}"
+                                    }
                             ) {
-                                Text("${student.rollNo}. ${student.studentName}", modifier = Modifier.padding(12.dp))
+                                Text(
+                                    "${student.rollNo}. ${student.studentName}",
+                                    modifier = Modifier.padding(12.dp)
+                                )
                             }
                         }
                     }
@@ -7804,24 +8932,30 @@ fun AddStudentScreen(onBack: () -> Unit) {
         if (studentName.isNotEmpty() || selectedOption == "NEW") {
             Spacer(Modifier.height(10.dp))
             Text("Student Details", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-            
+
             OutlinedTextField(
                 value = studentName,
                 onValueChange = { if (selectedOption == "NEW") studentName = it },
                 label = { Text("Student Name") },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = selectedOption == "NEW",
-                colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.Black, unfocusedTextColor = Color.Black)
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.Black,
+                    unfocusedTextColor = Color.Black
+                )
             )
             Spacer(modifier = Modifier.height(8.dp))
-            
+
             OutlinedTextField(
                 value = mobile,
                 onValueChange = { if (selectedOption == "NEW" && it.length <= 10) mobile = it },
                 label = { Text("Mobile Number") },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = selectedOption == "NEW",
-                colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.Black, unfocusedTextColor = Color.Black)
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.Black,
+                    unfocusedTextColor = Color.Black
+                )
             )
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -7860,10 +8994,10 @@ fun AddStudentScreen(onBack: () -> Unit) {
                     enabled = selectedOption == "NEW"
                 )
             }
-            
+
             Spacer(modifier = Modifier.height(16.dp))
             Text("Login Credentials", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-            
+
             OutlinedTextField(
                 value = username,
                 onValueChange = { username = it },
@@ -7874,13 +9008,18 @@ fun AddStudentScreen(onBack: () -> Unit) {
 
             OutlinedTextField(
                 value = temporaryPassword,
-                onValueChange = { if (it.length <= 4 && it.all { ch -> ch.isDigit() }) temporaryPassword = it },
+                onValueChange = {
+                    if (it.length <= 4 && it.all { ch -> ch.isDigit() }) temporaryPassword = it
+                },
                 label = { Text("Password (4 digits)") },
                 modifier = Modifier.fillMaxWidth(),
                 visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = {
                     IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                        Icon(imageVector = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff, contentDescription = null)
+                        Icon(
+                            imageVector = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                            contentDescription = null
+                        )
                     }
                 }
             )
@@ -7889,24 +9028,32 @@ fun AddStudentScreen(onBack: () -> Unit) {
 
             Button(
                 onClick = {
-                    if (temporaryPassword.length != 4) { message = "Password must be 4 digits"; return@Button }
-                    if (username.isBlank()) { message = "Username is required"; return@Button }
-                    
+                    if (temporaryPassword.length != 4) {
+                        message = "Password must be 4 digits"; return@Button
+                    }
+                    if (username.isBlank()) {
+                        message = "Username is required"; return@Button
+                    }
+
                     isSaving = true
                     message = "⏳ Saving..."
-                    
+
                     scope.launch {
                         var sheetSuccess = true
                         var sheetMessage = ""
-                        
+
                         if (selectedOption == "NEW") {
                             // Add to Google Sheets first
                             try {
                                 val response = withContext(Dispatchers.IO) {
-                                    val connection = URL(scriptUrl).openConnection() as HttpURLConnection
+                                    val connection =
+                                        URL(scriptUrl).openConnection() as HttpURLConnection
                                     connection.requestMethod = "POST"
                                     connection.doOutput = true
-                                    connection.setRequestProperty("Content-Type", "application/json")
+                                    connection.setRequestProperty(
+                                        "Content-Type",
+                                        "application/json"
+                                    )
                                     val payload = JSONObject().apply {
                                         put("action", "addStudent")
                                         put("studentName", studentName)
@@ -7915,28 +9062,49 @@ fun AddStudentScreen(onBack: () -> Unit) {
                                         put("standard", className)
                                         put("board", board)
                                     }
-                                    connection.outputStream.use { it.write(payload.toString().toByteArray()) }
+                                    connection.outputStream.use {
+                                        it.write(
+                                            payload.toString().toByteArray()
+                                        )
+                                    }
                                     val res = if (connection.responseCode == 200) {
-                                        connection.inputStream.bufferedReader().use { it.readText() }
+                                        connection.inputStream.bufferedReader()
+                                            .use { it.readText() }
                                     } else {
-                                        connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                                        connection.errorStream?.bufferedReader()
+                                            ?.use { it.readText() } ?: ""
                                     }
                                     JSONObject(res)
                                 }
                                 sheetSuccess = response.optBoolean("success", false)
-                                sheetMessage = response.optString("error", response.optString("message", "Sheet error"))
+                                sheetMessage = response.optString(
+                                    "error",
+                                    response.optString("message", "Sheet error")
+                                )
                             } catch (e: Exception) {
                                 sheetSuccess = false
                                 sheetMessage = e.message ?: "Connection error"
                             }
                         }
-                        
+
                         if (sheetSuccess) {
-                            addStudentToFirebase(studentName, mobile, className, division, rollNo, board, username, temporaryPassword) { success, result ->
+                            addStudentToFirebase(
+                                studentName,
+                                mobile,
+                                className,
+                                division,
+                                rollNo,
+                                board,
+                                username,
+                                temporaryPassword
+                            ) { success, result ->
                                 isSaving = false
-                                message = if (selectedOption == "NEW") "✅ Student added to Sheet & Firebase!" else "✅ $result"
+                                message =
+                                    if (selectedOption == "NEW") "✅ Student added to Sheet & Firebase!" else "✅ $result"
                                 if (success) {
-                                    studentName = ""; mobile = ""; className = ""; division = ""; rollNo = ""; board = ""; username = ""; temporaryPassword = ""
+                                    studentName = ""; mobile = ""; className = ""; division =
+                                        ""; rollNo = ""; board = ""; username =
+                                        ""; temporaryPassword = ""
                                 }
                             }
                         } else {
@@ -7953,7 +9121,9 @@ fun AddStudentScreen(onBack: () -> Unit) {
         }
 
         Spacer(modifier = Modifier.height(15.dp))
-        if (message.isNotEmpty()) { Text(text = message, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
+        if (message.isNotEmpty()) {
+            Text(text = message, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        }
         Spacer(modifier = Modifier.height(20.dp))
         OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("BACK") }
     }
@@ -8148,22 +9318,41 @@ fun ChangePasswordScreen(
     var saving by remember { mutableStateOf(false) }
 
     Column(
-        modifier = Modifier.fillMaxSize().background(Color(0xFFF7F4FF)).padding(24.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFF7F4FF))
+            .padding(24.dp),
         verticalArrangement = Arrangement.Center
     ) {
         IndiumCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(20.dp)) {
-                Text(text = "Change Password", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = Color(0xFF673AB7))
+                Text(
+                    text = "Change Password",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF673AB7)
+                )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(text = "Create your new 4-digit security PIN.", color = Color.Gray)
                 Spacer(modifier = Modifier.height(24.dp))
 
                 OutlinedTextField(
                     value = newPassword,
-                    onValueChange = { if (it.length <= 4 && it.all { c -> c.isDigit() }) newPassword = it },
+                    onValueChange = {
+                        if (it.length <= 4 && it.all { c -> c.isDigit() }) newPassword = it
+                    },
                     label = { Text("New PIN") },
                     visualTransformation = if (showNewPassword) VisualTransformation.None else PasswordVisualTransformation(),
-                    trailingIcon = { IconButton(onClick = { showNewPassword = !showNewPassword }) { Icon(imageVector = if (showNewPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility, contentDescription = null) } },
+                    trailingIcon = {
+                        IconButton(onClick = {
+                            showNewPassword = !showNewPassword
+                        }) {
+                            Icon(
+                                imageVector = if (showNewPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = null
+                            )
+                        }
+                    },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
@@ -8171,31 +9360,51 @@ fun ChangePasswordScreen(
                 Spacer(modifier = Modifier.height(12.dp))
                 OutlinedTextField(
                     value = confirmPassword,
-                    onValueChange = { if (it.length <= 4 && it.all { c -> c.isDigit() }) confirmPassword = it },
+                    onValueChange = {
+                        if (it.length <= 4 && it.all { c -> c.isDigit() }) confirmPassword = it
+                    },
                     label = { Text("Confirm PIN") },
                     visualTransformation = if (showConfirmPassword) VisualTransformation.None else PasswordVisualTransformation(),
-                    trailingIcon = { IconButton(onClick = { showConfirmPassword = !showConfirmPassword }) { Icon(imageVector = if (showConfirmPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility, contentDescription = null) } },
+                    trailingIcon = {
+                        IconButton(onClick = {
+                            showConfirmPassword = !showConfirmPassword
+                        }) {
+                            Icon(
+                                imageVector = if (showConfirmPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = null
+                            )
+                        }
+                    },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
                 )
-                
+
                 Spacer(modifier = Modifier.height(24.dp))
                 IndiumButton(
                     text = if (saving) "SAVING..." else "UPDATE PIN",
                     onClick = {
-                        if (newPassword.length != 4 || newPassword != confirmPassword) { message = "Invalid PIN or mismatch"; return@IndiumButton }
+                        if (newPassword.length != 4 || newPassword != confirmPassword) {
+                            message = "Invalid PIN or mismatch"; return@IndiumButton
+                        }
                         saving = true
-                        FirebaseFirestore.getInstance().collection("users").document(documentId).update(mapOf("password" to newPassword, "firstLogin" to false))
+                        FirebaseFirestore.getInstance().collection("users").document(documentId)
+                            .update(mapOf("password" to newPassword, "firstLogin" to false))
                             .addOnSuccessListener { saving = false; onPasswordChanged() }
-                            .addOnFailureListener { e -> saving = false; message = e.message ?: "Error" }
+                            .addOnFailureListener { e ->
+                                saving = false; message = e.message ?: "Error"
+                            }
                     },
                     enabled = !saving,
                     containerColor = Color(0xFF7C4DFF)
                 )
             }
         }
-        if (message.isNotEmpty()) Text(text = message, color = Color.Red, modifier = Modifier.padding(top = 16.dp))
+        if (message.isNotEmpty()) Text(
+            text = message,
+            color = Color.Red,
+            modifier = Modifier.padding(top = 16.dp)
+        )
     }
 }
 
@@ -8213,9 +9422,21 @@ fun TeacherTodayLecturesScreen(
     val context = LocalContext.current
     val teacherName = CurrentUser.name
     val kolkataTimeZone = remember { TimeZone.getTimeZone("Asia/Kolkata") }
-    val dateFormat = remember { SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).apply { timeZone = kolkataTimeZone } }
-    val displayDateFormat = remember { SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()).apply { timeZone = kolkataTimeZone } }
-    val dayNameFormat = remember { SimpleDateFormat("EEEE", Locale.getDefault()).apply { timeZone = kolkataTimeZone } }
+    val dateFormat = remember {
+        SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).apply {
+            timeZone = kolkataTimeZone
+        }
+    }
+    val displayDateFormat = remember {
+        SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()).apply {
+            timeZone = kolkataTimeZone
+        }
+    }
+    val dayNameFormat = remember {
+        SimpleDateFormat("EEEE", Locale.getDefault()).apply {
+            timeZone = kolkataTimeZone
+        }
+    }
 
     var selectedCalendar by remember {
         mutableStateOf(
@@ -8278,7 +9499,8 @@ fun TeacherTodayLecturesScreen(
                     connection.readTimeout = 30000
                     connection.instanceFollowRedirects = true
                     try {
-                        if (connection.responseCode == 200) connection.inputStream.bufferedReader().use { it.readText() } else null
+                        if (connection.responseCode == 200) connection.inputStream.bufferedReader()
+                            .use { it.readText() } else null
                     } finally {
                         connection.disconnect()
                     }
@@ -8293,17 +9515,24 @@ fun TeacherTodayLecturesScreen(
                             val item = jsonLectures.getJSONObject(i)
                             val origTeacher = item.optString("originalTeacher", "")
                             val adjTeacher = item.optString("adjustedTeacher", "")
-                            val isAdjusted = item.optBoolean("adjusted", false) || adjTeacher.isNotBlank()
-                            val displayTeacher = if (isAdjusted && adjTeacher.isNotBlank()) adjTeacher else item.optString("teacher", teacherName)
+                            val isAdjusted =
+                                item.optBoolean("adjusted", false) || adjTeacher.isNotBlank()
+                            val displayTeacher =
+                                if (isAdjusted && adjTeacher.isNotBlank()) adjTeacher else item.optString(
+                                    "teacher",
+                                    teacherName
+                                )
 
-                            resultList.add(TodayLecture(
-                                time = item.optString("time"),
-                                className = item.optString("className"),
-                                subject = item.optString("subject"),
-                                teacher = displayTeacher,
-                                adjusted = isAdjusted,
-                                originalTeacher = if (origTeacher.isNotBlank()) origTeacher else teacherName
-                            ))
+                            resultList.add(
+                                TodayLecture(
+                                    time = item.optString("time"),
+                                    className = item.optString("className"),
+                                    subject = item.optString("subject"),
+                                    teacher = displayTeacher,
+                                    adjusted = isAdjusted,
+                                    originalTeacher = if (origTeacher.isNotBlank()) origTeacher else teacherName
+                                )
+                            )
                         }
                         if (resultList.isNotEmpty()) {
                             dayOfWeekScheduleCache[dayName] = resultList
@@ -8329,7 +9558,8 @@ fun TeacherTodayLecturesScreen(
                                     altCal.add(Calendar.DAY_OF_MONTH, 7 * weeksAhead)
                                     val altDate = dateFormat.format(altCal.time)
                                     val altEncodedDate = URLEncoder.encode(altDate, "UTF-8")
-                                    val altUrl = "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec?action=leaveLectures&teacherName=$encodedTeacher&date=$altEncodedDate"
+                                    val altUrl =
+                                        "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec?action=leaveLectures&teacherName=$encodedTeacher&date=$altEncodedDate"
 
                                     val altResponse = withContext(Dispatchers.IO) {
                                         val conn = URL(altUrl).openConnection() as HttpURLConnection
@@ -8337,7 +9567,8 @@ fun TeacherTodayLecturesScreen(
                                         conn.readTimeout = 15000
                                         conn.instanceFollowRedirects = true
                                         try {
-                                            if (conn.responseCode == 200) conn.inputStream.bufferedReader().use { it.readText() } else null
+                                            if (conn.responseCode == 200) conn.inputStream.bufferedReader()
+                                                .use { it.readText() } else null
                                         } finally {
                                             conn.disconnect()
                                         }
@@ -8345,23 +9576,35 @@ fun TeacherTodayLecturesScreen(
                                     if (altResponse != null) {
                                         val altJson = JSONObject(altResponse)
                                         if (altJson.optBoolean("success")) {
-                                            val altArr = altJson.optJSONArray("lectures") ?: JSONArray()
+                                            val altArr =
+                                                altJson.optJSONArray("lectures") ?: JSONArray()
                                             val altList = mutableListOf<TodayLecture>()
                                             for (i in 0 until altArr.length()) {
                                                 val item = altArr.getJSONObject(i)
-                                                val origTeacher = item.optString("originalTeacher", "")
-                                                val adjTeacher = item.optString("adjustedTeacher", "")
-                                                val isAdjusted = item.optBoolean("adjusted", false) || adjTeacher.isNotBlank()
-                                                val displayTeacher = if (isAdjusted && adjTeacher.isNotBlank()) adjTeacher else item.optString("teacher", teacherName)
+                                                val origTeacher =
+                                                    item.optString("originalTeacher", "")
+                                                val adjTeacher =
+                                                    item.optString("adjustedTeacher", "")
+                                                val isAdjusted = item.optBoolean(
+                                                    "adjusted",
+                                                    false
+                                                ) || adjTeacher.isNotBlank()
+                                                val displayTeacher =
+                                                    if (isAdjusted && adjTeacher.isNotBlank()) adjTeacher else item.optString(
+                                                        "teacher",
+                                                        teacherName
+                                                    )
 
-                                                altList.add(TodayLecture(
-                                                    time = item.optString("time"),
-                                                    className = item.optString("className"),
-                                                    subject = item.optString("subject"),
-                                                    teacher = displayTeacher,
-                                                    adjusted = isAdjusted,
-                                                    originalTeacher = if (origTeacher.isNotBlank()) origTeacher else teacherName
-                                                ))
+                                                altList.add(
+                                                    TodayLecture(
+                                                        time = item.optString("time"),
+                                                        className = item.optString("className"),
+                                                        subject = item.optString("subject"),
+                                                        teacher = displayTeacher,
+                                                        adjusted = isAdjusted,
+                                                        originalTeacher = if (origTeacher.isNotBlank()) origTeacher else teacherName
+                                                    )
+                                                )
                                             }
                                             fallbackLectures = altList
                                             if (altList.isNotEmpty()) {
@@ -8452,7 +9695,9 @@ fun TeacherTodayLecturesScreen(
                 contentColor = Color.White
             ) {
                 Row(
-                    modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                    modifier = Modifier
+                        .padding(12.dp)
+                        .fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -8481,19 +9726,36 @@ fun TeacherTodayLecturesScreen(
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = currentDateText,
-                            style = MaterialTheme.typography.bodySmall.copy(color = Color.White.copy(alpha = 0.9f))
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = Color.White.copy(
+                                    alpha = 0.9f
+                                )
+                            )
                         )
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconButton(
-                            onClick = { if (!refreshing) loadLecturesForDate(selectedCalendar, true) },
+                            onClick = {
+                                if (!refreshing) loadLecturesForDate(
+                                    selectedCalendar,
+                                    true
+                                )
+                            },
                             enabled = !refreshing
                         ) {
                             if (refreshing) {
-                                CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.dp
+                                )
                             } else {
-                                Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh", tint = Color.White)
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Refresh",
+                                    tint = Color.White
+                                )
                             }
                         }
 
@@ -8517,17 +9779,26 @@ fun TeacherTodayLecturesScreen(
             Spacer(modifier = Modifier.height(20.dp))
 
             if (loading) {
-                Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(200.dp),
+                    contentAlignment = Alignment.Center
+                ) {
                     CircularProgressIndicator(color = Color(0xFF7C4DFF))
                 }
             } else {
                 if (isLeaveApplied) {
                     IndiumCard(
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 16.dp),
                         containerColor = Color(0xFFFFF3E0)
                     ) {
                         Row(
-                            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                            modifier = Modifier
+                                .padding(16.dp)
+                                .fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
@@ -8552,7 +9823,9 @@ fun TeacherTodayLecturesScreen(
 
                     lectures.forEach { lecture ->
                         IndiumCard(
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp),
                             containerColor = if (lecture.adjusted) Color(0xFFFFF3E0) else Color.White
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
@@ -8598,7 +9871,9 @@ fun TeacherTodayLecturesScreen(
                 } else {
                     IndiumCard(modifier = Modifier.fillMaxWidth()) {
                         Column(
-                            modifier = Modifier.padding(24.dp).fillMaxWidth(),
+                            modifier = Modifier
+                                .padding(24.dp)
+                                .fillMaxWidth(),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Icon(
@@ -8630,6 +9905,7 @@ data class TodayLecture(
     val adjusted: Boolean,
     val originalTeacher: String
 )
+
 data class TeacherAttendanceRecord(
     val date: String,
     val teacherName: String,
@@ -8637,12 +9913,14 @@ data class TeacherAttendanceRecord(
     val outTime: String,
     val status: String
 )
+
 data class LeaveLecture(
     val time: String,
     val className: String,
     val subject: String,
     val originalTeacher: String
 )
+
 data class LeaveAdjustment(
     val time: String,
     val className: String,
@@ -8659,6 +9937,7 @@ data class LeaveHistoryRecord(
     val details: String,
     val adjustments: List<LeaveAdjustment> = emptyList()
 )
+
 fun formatLeaveDisplayDate(rawDate: String): String {
     if (rawDate.isBlank()) return rawDate
 
@@ -8711,8 +9990,15 @@ fun TeacherLeaveScreen(
     val context = LocalContext.current
     val kolkataTimeZone = TimeZone.getTimeZone("Asia/Kolkata")
     val todayKolkata = Calendar.getInstance(kolkataTimeZone)
-    
-    var selectedDate by remember { mutableStateOf(SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(todayKolkata.time)) }
+
+    var selectedDate by remember {
+        mutableStateOf(
+            SimpleDateFormat(
+                "dd/MM/yyyy",
+                Locale.getDefault()
+            ).format(todayKolkata.time)
+        )
+    }
     var lectures by remember { mutableStateOf<List<LeaveLecture>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
@@ -8720,7 +10006,7 @@ fun TeacherLeaveScreen(
     var showTeacherDialog by remember { mutableStateOf(false) }
     var adjustments by remember { mutableStateOf<List<String>>(emptyList()) }
     val teachers = remember { mutableStateListOf<String>() }
-    
+
     var showHistory by remember { mutableStateOf(false) }
     var historyList by remember { mutableStateOf<List<LeaveHistoryRecord>>(emptyList()) }
     var historyLoading by remember { mutableStateOf(false) }
@@ -8735,7 +10021,13 @@ fun TeacherLeaveScreen(
         historyError = ""
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val urlString = "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec?action=leaveHistory&teacherName=${URLEncoder.encode(CurrentUser.name, "UTF-8")}"
+                val urlString =
+                    "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec?action=leaveHistory&teacherName=${
+                        URLEncoder.encode(
+                            CurrentUser.name,
+                            "UTF-8"
+                        )
+                    }"
                 val response = withContext(Dispatchers.IO) {
                     val connection = URL(urlString).openConnection() as HttpURLConnection
                     connection.requestMethod = "GET"
@@ -8818,17 +10110,23 @@ fun TeacherLeaveScreen(
     fun loadTeachers() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val url = URL("https://script.google.com/macros/s/AKfycbx3vXqB5Vs6DToJp5ArnnbuIGIvBzGwcLJFFUWtDrlBrD7dqLcRj7u89xNrskwPjrgu/exec?action=teachers")
-                val response = url.openConnection().inputStream.bufferedReader().use { it.readText() }
+                val url =
+                    URL("https://script.google.com/macros/s/AKfycbx3vXqB5Vs6DToJp5ArnnbuIGIvBzGwcLJFFUWtDrlBrD7dqLcRj7u89xNrskwPjrgu/exec?action=teachers")
+                val response =
+                    url.openConnection().inputStream.bufferedReader().use { it.readText() }
                 val json = JSONObject(response)
                 if (json.getBoolean("success")) {
                     val array = json.getJSONArray("teachers")
                     withContext(Dispatchers.Main) {
                         teachers.clear()
-                        for (i in 0 until array.length()) { teachers.add(array.getJSONObject(i).getString("teacherName")) }
+                        for (i in 0 until array.length()) {
+                            teachers.add(array.getJSONObject(i).getString("teacherName"))
+                        }
                     }
                 }
-            } catch (e: Exception) { withContext(Dispatchers.Main) { message = "Error loading teachers" } }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { message = "Error loading teachers" }
+            }
         }
     }
 
@@ -9053,34 +10351,52 @@ fun TeacherLeaveScreen(
         return
     }
 
-    Scaffold(topBar = { IndiumTopBar("Apply Leave", onBack) }, containerColor = Color(0xFFF7F4FF)) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState())) {
+    Scaffold(
+        topBar = { IndiumTopBar("Apply Leave", onBack) },
+        containerColor = Color(0xFFF7F4FF)
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
             IndiumCard(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     IndiumOutlinedButton(text = "SELECT DATE: $selectedDate", onClick = {
                         val c = Calendar.getInstance(kolkataTimeZone)
-                        val dialog = DatePickerDialog(context, { _, y, m, d ->
-                            val cal = Calendar.getInstance()
-                            cal.set(y, m, d)
-                            selectedDate = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(cal.time)
-                            loadLectures()
-                        }, c.get(Calendar.YEAR), c.get(Calendar.MONTH), c.get(Calendar.DAY_OF_MONTH))
-                        
+                        val dialog = DatePickerDialog(
+                            context,
+                            { _, y, m, d ->
+                                val cal = Calendar.getInstance()
+                                cal.set(y, m, d)
+                                selectedDate = SimpleDateFormat(
+                                    "dd/MM/yyyy",
+                                    Locale.getDefault()
+                                ).format(cal.time)
+                                loadLectures()
+                            },
+                            c.get(Calendar.YEAR),
+                            c.get(Calendar.MONTH),
+                            c.get(Calendar.DAY_OF_MONTH)
+                        )
+
                         // Prevent selecting past dates
                         c.set(Calendar.HOUR_OF_DAY, 0)
                         c.set(Calendar.MINUTE, 0)
                         c.set(Calendar.SECOND, 0)
                         c.set(Calendar.MILLISECOND, 0)
                         dialog.datePicker.minDate = c.timeInMillis
-                        
+
                         dialog.show()
                     })
-                    
+
                     Spacer(modifier = Modifier.height(12.dp))
-                    
+
                     IndiumButton(
                         text = "VIEW LEAVE HISTORY",
-                        onClick = { 
+                        onClick = {
                             showHistory = true
                             loadLeaveHistory()
                         },
@@ -9092,16 +10408,25 @@ fun TeacherLeaveScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             if (loading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            if (message.isNotEmpty()) Text(message, modifier = Modifier.padding(8.dp), fontWeight = FontWeight.Bold)
+            if (message.isNotEmpty()) Text(
+                message,
+                modifier = Modifier.padding(8.dp),
+                fontWeight = FontWeight.Bold
+            )
 
             lectures.forEachIndexed { index, lecture ->
-                IndiumCard(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                IndiumCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(lecture.time, fontWeight = FontWeight.Bold, color = Color(0xFF7C4DFF))
                         Text("${lecture.className} • ${lecture.subject}")
                         Spacer(modifier = Modifier.height(8.dp))
                         IndiumOutlinedButton(
-                            text = adjustments.getOrNull(index).let { if (it.isNullOrBlank()) "SELECT SUBSTITUTE" else it },
+                            text = adjustments.getOrNull(index)
+                                .let { if (it.isNullOrBlank()) "SELECT SUBSTITUTE" else it },
                             onClick = { selectedLectureIndex = index; showTeacherDialog = true }
                         )
                     }
@@ -9109,18 +10434,36 @@ fun TeacherLeaveScreen(
             }
 
             Spacer(modifier = Modifier.height(24.dp))
-            IndiumButton(text = "APPLY LEAVE", onClick = { applyLeave() }, enabled = lectures.isNotEmpty() && adjustments.all { it.isNotBlank() }, containerColor = Color(0xFFF44336))
+            IndiumButton(
+                text = "APPLY LEAVE",
+                onClick = { applyLeave() },
+                enabled = lectures.isNotEmpty() && adjustments.all { it.isNotBlank() },
+                containerColor = Color(0xFFF44336)
+            )
             Spacer(modifier = Modifier.height(12.dp))
             IndiumOutlinedButton(text = "CANCEL", onClick = onBack)
         }
     }
 
     if (showTeacherDialog) {
-        AlertDialog(onDismissRequest = { showTeacherDialog = false }, title = { Text("Select Substitute") }, text = {
-            Column { teachers.filter { it != CurrentUser.name }.forEach { t ->
-                TextButton(onClick = { adjustments = adjustments.toMutableList().apply { this[selectedLectureIndex] = t }; showTeacherDialog = false }, modifier = Modifier.fillMaxWidth()) { Text(t) }
-            }}
-        }, confirmButton = { TextButton(onClick = { showTeacherDialog = false }) { Text("CLOSE") }})
+        AlertDialog(
+            onDismissRequest = { showTeacherDialog = false },
+            title = { Text("Select Substitute") },
+            text = {
+                Column {
+                    teachers.filter { it != CurrentUser.name }.forEach { t ->
+                        TextButton(onClick = {
+                            adjustments = adjustments.toMutableList()
+                                .apply { this[selectedLectureIndex] = t }; showTeacherDialog = false
+                        }, modifier = Modifier.fillMaxWidth()) { Text(t) }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showTeacherDialog = false
+                }) { Text("CLOSE") }
+            })
     }
 }
 
@@ -9178,7 +10521,7 @@ fun TeacherLeaveHistoryScreen(
                                         color = Color(0xFF252238)
                                     )
                                     Surface(
-                                        color = when(record.status.uppercase()) {
+                                        color = when (record.status.uppercase()) {
                                             "APPROVED" -> Color(0xFF4CAF50).copy(alpha = 0.1f)
                                             "REJECTED" -> Color.Red.copy(alpha = 0.1f)
                                             else -> Color(0xFF7C4DFF).copy(alpha = 0.1f)
@@ -9187,9 +10530,12 @@ fun TeacherLeaveHistoryScreen(
                                     ) {
                                         Text(
                                             text = record.status,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            modifier = Modifier.padding(
+                                                horizontal = 8.dp,
+                                                vertical = 4.dp
+                                            ),
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = when(record.status.uppercase()) {
+                                            color = when (record.status.uppercase()) {
                                                 "APPROVED" -> Color(0xFF4CAF50)
                                                 "REJECTED" -> Color.Red
                                                 else -> Color(0xFF7C4DFF)
@@ -9231,36 +10577,50 @@ fun ForgotPasswordScreen(
     var isLoading by remember { mutableStateOf(false) }
 
     Column(
-        modifier = Modifier.fillMaxSize().background(Color(0xFFF7F4FF)).padding(24.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFF7F4FF))
+            .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         IndiumCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(20.dp)) {
-                Text(text = "Reset PIN", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = Color(0xFF673AB7))
+                Text(
+                    text = "Reset PIN",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF673AB7)
+                )
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(text = "Enter your registered mobile number.", color = Color.Gray)
                 Spacer(modifier = Modifier.height(24.dp))
 
                 OutlinedTextField(
                     value = mobile,
-                    onValueChange = { if (it.length <= 10 && it.all { c -> c.isDigit() }) mobile = it },
+                    onValueChange = {
+                        if (it.length <= 10 && it.all { c -> c.isDigit() }) mobile = it
+                    },
                     label = { Text("Mobile Number") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
                 )
-                
+
                 Spacer(modifier = Modifier.height(24.dp))
                 IndiumButton(
                     text = if (isLoading) "PROCESSING..." else "REQUEST RESET",
                     onClick = {
-                        if (mobile.length != 10) { message = "Invalid mobile number"; return@IndiumButton }
+                        if (mobile.length != 10) {
+                            message = "Invalid mobile number"; return@IndiumButton
+                        }
                         isLoading = true
-                        FirebaseFirestore.getInstance().collection("users").whereEqualTo("mobile", mobile).whereEqualTo("role", selectedRole).get()
+                        FirebaseFirestore.getInstance().collection("users")
+                            .whereEqualTo("mobile", mobile).whereEqualTo("role", selectedRole).get()
                             .addOnSuccessListener { res ->
                                 isLoading = false
-                                message = if (res.isEmpty) "No account found." else "Contact Admin for temporary PIN."
+                                message =
+                                    if (res.isEmpty) "No account found." else "Contact Admin for temporary PIN."
                             }
                     },
                     enabled = !isLoading,
@@ -9268,31 +10628,47 @@ fun ForgotPasswordScreen(
                 )
             }
         }
-        if (message.isNotBlank()) Text(text = message, modifier = Modifier.padding(top = 16.dp), fontWeight = FontWeight.Bold)
-        TextButton(onClick = onBack, modifier = Modifier.padding(top = 12.dp)) { Text("BACK TO LOGIN", color = Color(0xFF7C4DFF)) }
+        if (message.isNotBlank()) Text(
+            text = message,
+            modifier = Modifier.padding(top = 16.dp),
+            fontWeight = FontWeight.Bold
+        )
+        TextButton(
+            onClick = onBack,
+            modifier = Modifier.padding(top = 12.dp)
+        ) { Text("BACK TO LOGIN", color = Color(0xFF7C4DFF)) }
     }
 }
 
 @Composable
 fun TeacherStudentsScreen(userRole: String = "Teacher", onBack: () -> Unit) {
     val context = LocalContext.current
-    val scriptUrl = "https://script.google.com/macros/s/AKfycbwbBEeUDm0gY_mCuPUJC04sw-O1aWlTTGbyu-x4yhl-BOLbUIoHD4cqWuuS_pNKRSCi/exec"
-    
+    val scriptUrl =
+        "https://script.google.com/macros/s/AKfycbwbBEeUDm0gY_mCuPUJC04sw-O1aWlTTGbyu-x4yhl-BOLbUIoHD4cqWuuS_pNKRSCi/exec"
+
     val classList = listOf(
-        "1st Standard", "2nd Standard", "3rd Standard", "4th Standard", 
-        "5th Standard", "6th Standard", "7th Standard", "8th Standard", "9th Standard", "10th Standard"
+        "1st Standard",
+        "2nd Standard",
+        "3rd Standard",
+        "4th Standard",
+        "5th Standard",
+        "6th Standard",
+        "7th Standard",
+        "8th Standard",
+        "9th Standard",
+        "10th Standard"
     )
-    
+
     val boardOptions = listOf("SSC", "CBSE", "General")
 
     var selectedClass by remember { mutableStateOf("10th Standard") }
     var selectedBoard by remember { mutableStateOf("SSC") }
     var searchText by remember { mutableStateOf("") }
-    
+
     var allStudents by remember { mutableStateOf<List<SheetStudent>>(emptyList()) }
     var isLoading by remember { mutableStateOf(false) }
     var loadError by remember { mutableStateOf("") }
-    
+
     var showClassMenu by remember { mutableStateOf(false) }
     var showBoardMenu by remember { mutableStateOf(false) }
 
@@ -9310,7 +10686,7 @@ fun TeacherStudentsScreen(userRole: String = "Teacher", onBack: () -> Unit) {
                     connection.inputStream.bufferedReader().use { it.readText() }
                 } else null
             }
-            
+
             if (result != null) {
                 val json = JSONObject(result)
                 if (json.optBoolean("success")) {
@@ -9318,13 +10694,15 @@ fun TeacherStudentsScreen(userRole: String = "Teacher", onBack: () -> Unit) {
                     val loadedStudents = mutableListOf<SheetStudent>()
                     for (i in 0 until studentsArray.length()) {
                         val student = studentsArray.getJSONObject(i)
-                        loadedStudents.add(SheetStudent(
-                            rollNo = student.optString("rollNo").trim(),
-                            studentName = student.optString("studentName").trim(),
-                            mobileNo = student.optString("mobileNo").trim(),
-                            standard = student.optString("standard").trim(),
-                            board = student.optString("board").trim()
-                        ))
+                        loadedStudents.add(
+                            SheetStudent(
+                                rollNo = student.optString("rollNo").trim(),
+                                studentName = student.optString("studentName").trim(),
+                                mobileNo = student.optString("mobileNo").trim(),
+                                standard = student.optString("standard").trim(),
+                                board = student.optString("board").trim()
+                            )
+                        )
                     }
                     allStudents = loadedStudents.sortedBy { it.studentName }
                 } else {
@@ -9343,15 +10721,15 @@ fun TeacherStudentsScreen(userRole: String = "Teacher", onBack: () -> Unit) {
     val filteredStudents = allStudents.filter { student ->
         val classDigits = selectedClass.filter { it.isDigit() }
         val matchesClass = student.standard.filter { it.isDigit() } == classDigits
-        
+
         val matchesBoard = when (selectedBoard) {
             "General" -> !student.board.equals("SSC", true) && !student.board.equals("CBSE", true)
             else -> student.board.equals(selectedBoard, ignoreCase = true)
         }
-        
-        val matchesSearch = if (searchText.isBlank()) true 
-                           else student.studentName.contains(searchText, ignoreCase = true)
-        
+
+        val matchesSearch = if (searchText.isBlank()) true
+        else student.studentName.contains(searchText, ignoreCase = true)
+
         matchesClass && matchesBoard && matchesSearch
     }
 
@@ -9362,7 +10740,9 @@ fun TeacherStudentsScreen(userRole: String = "Teacher", onBack: () -> Unit) {
     ) {
         if (userRole == "Admin") {
             IndiumCard(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
                 containerColor = Color(0xFF673AB7).copy(alpha = 0.05f)
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
@@ -9374,12 +10754,14 @@ fun TeacherStudentsScreen(userRole: String = "Teacher", onBack: () -> Unit) {
                         )
                     )
                     Spacer(modifier = Modifier.height(4.dp))
-                    
+
                     // Standard-wise counts summary (Admin only)
                     val countsByStandard = allStudents.groupBy { it.standard }
                     Text(
                         text = countsByStandard.entries
-                            .sortedBy { entry -> entry.key.filter { it.isDigit() }.toIntOrNull() ?: 0 }
+                            .sortedBy { entry ->
+                                entry.key.filter { it.isDigit() }.toIntOrNull() ?: 0
+                            }
                             .joinToString(" | ") { "${it.key.split(" ")[0]}: ${it.value.size}" },
                         style = MaterialTheme.typography.bodySmall,
                         color = Color.DarkGray
@@ -9402,9 +10784,9 @@ fun TeacherStudentsScreen(userRole: String = "Teacher", onBack: () -> Unit) {
                 unfocusedTextColor = Color(0xFF252238)
             )
         )
-        
+
         Spacer(modifier = Modifier.height(12.dp))
-        
+
         // Filters Row
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -9431,7 +10813,7 @@ fun TeacherStudentsScreen(userRole: String = "Teacher", onBack: () -> Unit) {
                     }
                 }
             }
-            
+
             // Board Filter
             Box(modifier = Modifier.weight(0.7f)) {
                 IndiumOutlinedButton(
@@ -9454,9 +10836,9 @@ fun TeacherStudentsScreen(userRole: String = "Teacher", onBack: () -> Unit) {
                 }
             }
         }
-        
+
         Spacer(modifier = Modifier.height(16.dp))
-        
+
         // Student Count - CURRENT GROUP ONLY
         Text(
             text = "Group Count: ${filteredStudents.size}",
@@ -9469,19 +10851,34 @@ fun TeacherStudentsScreen(userRole: String = "Teacher", onBack: () -> Unit) {
         Spacer(modifier = Modifier.height(12.dp))
 
         if (isLoading) {
-            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
                 CircularProgressIndicator(color = Color(0xFF7C4DFF))
             }
         } else if (loadError.isNotEmpty()) {
-            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
                 Text(text = loadError, color = Color.Red, fontWeight = FontWeight.Bold)
             }
         } else if (filteredStudents.isEmpty()) {
-            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(
                         imageVector = Icons.Default.GroupOff,
-                        contentDescription = null, 
+                        contentDescription = null,
                         modifier = Modifier.size(48.dp),
                         tint = Color.LightGray
                     )
@@ -9519,7 +10916,10 @@ fun TeacherStudentsScreen(userRole: String = "Teacher", onBack: () -> Unit) {
                                     ) {
                                         Text(
                                             text = "#${student.rollNo}",
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                            modifier = Modifier.padding(
+                                                horizontal = 6.dp,
+                                                vertical = 2.dp
+                                            ),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = Color(0xFF7C4DFF),
                                             fontWeight = FontWeight.Bold
@@ -9527,9 +10927,9 @@ fun TeacherStudentsScreen(userRole: String = "Teacher", onBack: () -> Unit) {
                                     }
                                 }
                             }
-                            
+
                             Spacer(modifier = Modifier.height(6.dp))
-                            
+
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
                                     imageVector = Icons.Default.School,
@@ -9539,7 +10939,7 @@ fun TeacherStudentsScreen(userRole: String = "Teacher", onBack: () -> Unit) {
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = "${student.standard} • ${if(student.board.isBlank()) "General" else student.board}",
+                                    text = "${student.standard} • ${if (student.board.isBlank()) "General" else student.board}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Color.Gray
                                 )
@@ -9551,7 +10951,10 @@ fun TeacherStudentsScreen(userRole: String = "Teacher", onBack: () -> Unit) {
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.clickable {
                                         try {
-                                            val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${student.mobileNo}"))
+                                            val intent = Intent(
+                                                Intent.ACTION_DIAL,
+                                                Uri.parse("tel:${student.mobileNo}")
+                                            )
                                             context.startActivity(intent)
                                         } catch (e: Exception) {
                                             // Handle case where no dialer is available
@@ -9586,9 +10989,14 @@ fun TeacherStudentsScreen(userRole: String = "Teacher", onBack: () -> Unit) {
 @Composable
 fun StudentProfileScreen(student: SheetStudent, onBack: () -> Unit) {
     val context = LocalContext.current
-    val scriptUrl = "https://script.google.com/macros/s/AKfycbwbBEeUDm0gY_mCuPUJC04sw-O1aWlTTGbyu-x4yhl-BOLbUIoHD4cqWuuS_pNKRSCi/exec"
+    val scriptUrl =
+        "https://script.google.com/macros/s/AKfycbwbBEeUDm0gY_mCuPUJC04sw-O1aWlTTGbyu-x4yhl-BOLbUIoHD4cqWuuS_pNKRSCi/exec"
 
-    var selectedMonth by remember { mutableStateOf(Calendar.getInstance().get(Calendar.MONTH) + 1) } // 1-based index
+    var selectedMonth by remember {
+        mutableStateOf(
+            Calendar.getInstance().get(Calendar.MONTH) + 1
+        )
+    } // 1-based index
     var attendanceList by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     var isLoadingAttendance by remember { mutableStateOf(false) }
     var attendanceError by remember { mutableStateOf("") }
@@ -9763,32 +11171,60 @@ fun StudentProfileScreen(student: SheetStudent, onBack: () -> Unit) {
                 .verticalScroll(rememberScrollState())
         ) {
             // A. BASIC INFORMATION
-            Text(text = "Basic Information", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFF252238))
+            Text(
+                text = "Basic Information",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF252238)
+            )
             Spacer(modifier = Modifier.height(8.dp))
             IndiumCard(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text(text = "Name: ${student.studentName}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        text = "Name: ${student.studentName}",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(text = "Class: ${student.standard}", color = Color.Gray)
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(text = "Board: ${if(student.board.isBlank()) "General" else student.board}", color = Color.Gray)
+                    Text(
+                        text = "Board: ${if (student.board.isBlank()) "General" else student.board}",
+                        color = Color.Gray
+                    )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(text = "Roll No: #${student.rollNo}", color = Color.Gray)
-                    
+
                     if (student.mobileNo.isNotBlank()) {
                         Spacer(modifier = Modifier.height(12.dp))
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.clickable {
                                 try {
-                                    val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${student.mobileNo}"))
+                                    val intent = Intent(
+                                        Intent.ACTION_DIAL,
+                                        Uri.parse("tel:${student.mobileNo}")
+                                    )
                                     context.startActivity(intent)
-                                } catch (e: Exception) {}
+                                } catch (e: Exception) {
+                                }
                             }
                         ) {
-                            Icon(imageVector = Icons.Default.Call, contentDescription = "Call", modifier = Modifier.size(16.dp), tint = Color(0xFF4CAF50))
+                            Icon(
+                                imageVector = Icons.Default.Call,
+                                contentDescription = "Call",
+                                modifier = Modifier.size(16.dp),
+                                tint = Color(0xFF4CAF50)
+                            )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text(text = student.mobileNo, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, textDecoration = TextDecoration.Underline), color = Color(0xFF4CAF50))
+                            Text(
+                                text = student.mobileNo,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    textDecoration = TextDecoration.Underline
+                                ),
+                                color = Color(0xFF4CAF50)
+                            )
                         }
                     }
                 }
@@ -9797,26 +11233,46 @@ fun StudentProfileScreen(student: SheetStudent, onBack: () -> Unit) {
             Spacer(modifier = Modifier.height(24.dp))
 
             // B. FEES INFORMATION
-            Text(text = "Fees Information", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFF252238))
+            Text(
+                text = "Fees Information",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF252238)
+            )
             Spacer(modifier = Modifier.height(8.dp))
             IndiumCard(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text(text = "Fee information is not available.", color = Color.Gray, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = "Fee information is not available.",
+                        color = Color.Gray,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                 }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
 
             // C. MONTHLY ATTENDANCE
-            Text(text = "Monthly Attendance", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFF252238))
+            Text(
+                text = "Monthly Attendance",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF252238)
+            )
             Spacer(modifier = Modifier.height(8.dp))
-            
+
             var showMonthMenu by remember { mutableStateOf(false) }
             Box(modifier = Modifier.fillMaxWidth()) {
-                IndiumOutlinedButton(text = "Month: ${monthsList[selectedMonth - 1]}", onClick = { showMonthMenu = true })
-                DropdownMenu(expanded = showMonthMenu, onDismissRequest = { showMonthMenu = false }) {
+                IndiumOutlinedButton(
+                    text = "Month: ${monthsList[selectedMonth - 1]}",
+                    onClick = { showMonthMenu = true })
+                DropdownMenu(
+                    expanded = showMonthMenu,
+                    onDismissRequest = { showMonthMenu = false }) {
                     monthsList.forEachIndexed { idx, name ->
-                        DropdownMenuItem(text = { Text(name) }, onClick = { selectedMonth = idx + 1; showMonthMenu = false })
+                        DropdownMenuItem(
+                            text = { Text(name) },
+                            onClick = { selectedMonth = idx + 1; showMonthMenu = false })
                     }
                 }
             }
@@ -9824,24 +11280,61 @@ fun StudentProfileScreen(student: SheetStudent, onBack: () -> Unit) {
             Spacer(modifier = Modifier.height(12.dp))
 
             if (isLoadingAttendance) {
-                Box(modifier = Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(100.dp),
+                    contentAlignment = Alignment.Center
+                ) {
                     CircularProgressIndicator(color = Color(0xFF7C4DFF))
                 }
             } else if (attendanceError.isNotEmpty()) {
-                Text(text = attendanceError, color = Color.Red, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    text = attendanceError,
+                    color = Color.Red,
+                    style = MaterialTheme.typography.bodyMedium
+                )
             } else {
-                val totalPresent = attendanceList.count { it.second.equals("Present", ignoreCase = true) }
-                val totalAbsent = attendanceList.count { it.second.equals("Absent", ignoreCase = true) }
-                
-                IndiumCard(modifier = Modifier.fillMaxWidth(), containerColor = Color(0xFF7C4DFF).copy(alpha = 0.05f)) {
-                    Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
+                val totalPresent =
+                    attendanceList.count { it.second.equals("Present", ignoreCase = true) }
+                val totalAbsent =
+                    attendanceList.count { it.second.equals("Absent", ignoreCase = true) }
+
+                IndiumCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    containerColor = Color(0xFF7C4DFF).copy(alpha = 0.05f)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .padding(16.dp)
+                            .fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceAround
+                    ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("Present Days", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                            Text("$totalPresent", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, color = Color(0xFF4CAF50))
+                            Text(
+                                "Present Days",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Gray
+                            )
+                            Text(
+                                "$totalPresent",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color(0xFF4CAF50)
+                            )
                         }
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("Absent Days", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                            Text("$totalAbsent", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, color = Color.Red)
+                            Text(
+                                "Absent Days",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Gray
+                            )
+                            Text(
+                                "$totalAbsent",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color.Red
+                            )
                         }
                     }
                 }
@@ -9849,27 +11342,52 @@ fun StudentProfileScreen(student: SheetStudent, onBack: () -> Unit) {
                 Spacer(modifier = Modifier.height(12.dp))
 
                 if (attendanceList.isEmpty()) {
-                    Text(text = "No logs found for this month.", color = Color.Gray, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(8.dp))
+                    Text(
+                        text = "No logs found for this month.",
+                        color = Color.Gray,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(8.dp)
+                    )
                 } else {
                     attendanceList.forEach { record ->
                         Card(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                            colors = CardColors(containerColor = Color.White, contentColor = Color.Unspecified, disabledContainerColor = Color.Unspecified, disabledContentColor = Color.Unspecified)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            colors = CardColors(
+                                containerColor = Color.White,
+                                contentColor = Color.Unspecified,
+                                disabledContainerColor = Color.Unspecified,
+                                disabledContentColor = Color.Unspecified
+                            )
                         ) {
                             Row(
-                                modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                                modifier = Modifier
+                                    .padding(12.dp)
+                                    .fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(text = record.first, fontWeight = FontWeight.Medium)
                                 Surface(
-                                    color = if(record.second.equals("Present", ignoreCase = true)) Color(0xFF4CAF50).copy(alpha = 0.1f) else Color.Red.copy(alpha = 0.1f),
+                                    color = if (record.second.equals(
+                                            "Present",
+                                            ignoreCase = true
+                                        )
+                                    ) Color(0xFF4CAF50).copy(alpha = 0.1f) else Color.Red.copy(alpha = 0.1f),
                                     shape = RoundedCornerShape(4.dp)
                                 ) {
                                     Text(
                                         text = record.second,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                        color = if(record.second.equals("Present", ignoreCase = true)) Color(0xFF4CAF50) else Color.Red,
+                                        modifier = Modifier.padding(
+                                            horizontal = 8.dp,
+                                            vertical = 4.dp
+                                        ),
+                                        color = if (record.second.equals(
+                                                "Present",
+                                                ignoreCase = true
+                                            )
+                                        ) Color(0xFF4CAF50) else Color.Red,
                                         fontWeight = FontWeight.Bold,
                                         style = MaterialTheme.typography.labelSmall
                                     )
@@ -9879,7 +11397,7 @@ fun StudentProfileScreen(student: SheetStudent, onBack: () -> Unit) {
                     }
                 }
             }
-            
+
             Spacer(modifier = Modifier.height(24.dp))
             IndiumOutlinedButton(text = "BACK TO DASHBOARD", onClick = onBack)
         }
@@ -9897,30 +11415,32 @@ fun AdminTeacherProfileScreen(teacher: TeacherRecord, onBack: () -> Unit) {
     var attendanceError by remember { mutableStateOf("") }
     var leaveError by remember { mutableStateOf("") }
 
-    val attendanceUrl = "https://script.google.com/macros/s/AKfycbx3vXqB5Vs6DToJp5ArnnbuIGIvBzGwcLJFFUWtDrlBrD7dqLcRj7u89xNrskwPjrgu/exec"
-    val leaveUrl = "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec"
+    val attendanceUrl =
+        "https://script.google.com/macros/s/AKfycbx3vXqB5Vs6DToJp5ArnnbuIGIvBzGwcLJFFUWtDrlBrD7dqLcRj7u89xNrskwPjrgu/exec"
+    val leaveUrl =
+        "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec"
 
     LaunchedEffect(teacher.mobile) {
         val rawMobile = teacher.mobile.filter { it.isDigit() }
         val normalizedMobile = if (rawMobile.length > 10) rawMobile.takeLast(10) else rawMobile
-        
+
         if (normalizedMobile.isBlank()) return@LaunchedEffect
-        
+
         // 1. Fetch Teacher Attendance History
         isLoadingAttendance = true
         attendanceError = ""
-        
+
         try {
             val encodedMobile = URLEncoder.encode(normalizedMobile, "UTF-8")
             val urlString = "$attendanceUrl?action=history&mobile=$encodedMobile"
-            
+
             val response = withContext(Dispatchers.IO) {
                 val connection = URL(urlString).openConnection() as HttpURLConnection
                 connection.requestMethod = "GET"
                 connection.connectTimeout = 15000
                 connection.readTimeout = 15000
                 connection.instanceFollowRedirects = true
-                
+
                 try {
                     val code = connection.responseCode
                     if (code == 200) {
@@ -9930,7 +11450,8 @@ fun AdminTeacherProfileScreen(teacher: TeacherRecord, onBack: () -> Unit) {
                         if (loc != null) {
                             val conn2 = URL(loc).openConnection() as HttpURLConnection
                             conn2.requestMethod = "GET"
-                            if (conn2.responseCode == 200) conn2.inputStream.bufferedReader().use { it.readText() } else null
+                            if (conn2.responseCode == 200) conn2.inputStream.bufferedReader()
+                                .use { it.readText() } else null
                         } else null
                     } else null
                 } finally {
@@ -9941,22 +11462,24 @@ fun AdminTeacherProfileScreen(teacher: TeacherRecord, onBack: () -> Unit) {
             if (response != null) {
                 val json = JSONObject(response)
                 if (json.optBoolean("success")) {
-                    val arr = json.optJSONArray("records") 
-                           ?: json.optJSONArray("history") 
-                           ?: json.optJSONArray("attendance")
-                           ?: json.optJSONArray("data")
-                           ?: JSONArray()
-                           
+                    val arr = json.optJSONArray("records")
+                        ?: json.optJSONArray("history")
+                        ?: json.optJSONArray("attendance")
+                        ?: json.optJSONArray("data")
+                        ?: JSONArray()
+
                     val recordsList = mutableListOf<TeacherAttendanceRecord>()
                     for (i in 0 until arr.length()) {
                         val obj = arr.getJSONObject(i)
-                        recordsList.add(TeacherAttendanceRecord(
-                            date = obj.optString("date"),
-                            teacherName = obj.optString("teacherName", teacher.name),
-                            inTime = obj.optString("inTime"),
-                            outTime = obj.optString("outTime"),
-                            status = obj.optString("status")
-                        ))
+                        recordsList.add(
+                            TeacherAttendanceRecord(
+                                date = obj.optString("date"),
+                                teacherName = obj.optString("teacherName", teacher.name),
+                                inTime = obj.optString("inTime"),
+                                outTime = obj.optString("outTime"),
+                                status = obj.optString("status")
+                            )
+                        )
                     }
                     attendanceList = recordsList.reversed()
                 } else {
@@ -9977,14 +11500,14 @@ fun AdminTeacherProfileScreen(teacher: TeacherRecord, onBack: () -> Unit) {
         try {
             val encodedTeacherName = URLEncoder.encode(teacher.name, "UTF-8")
             val urlString = "$leaveUrl?action=leaveHistory&teacherName=$encodedTeacherName"
-            
+
             val response = withContext(Dispatchers.IO) {
                 val connection = URL(urlString).openConnection() as HttpURLConnection
                 connection.requestMethod = "GET"
                 connection.connectTimeout = 15000
                 connection.readTimeout = 15000
                 connection.instanceFollowRedirects = true
-                
+
                 try {
                     if (connection.responseCode == 200) {
                         connection.inputStream.bufferedReader().use { it.readText() }
@@ -9995,11 +11518,12 @@ fun AdminTeacherProfileScreen(teacher: TeacherRecord, onBack: () -> Unit) {
                     connection.disconnect()
                 }
             }
-            
+
             if (response != null) {
                 val json = JSONObject(response)
                 if (json.optBoolean("success")) {
-                    val arr = json.optJSONArray("records") ?: json.optJSONArray("history") ?: JSONArray()
+                    val arr =
+                        json.optJSONArray("records") ?: json.optJSONArray("history") ?: JSONArray()
                     val recordsList = mutableListOf<LeaveHistoryRecord>()
                     for (i in 0 until arr.length()) {
                         val obj = arr.getJSONObject(i)
@@ -10059,32 +11583,60 @@ fun AdminTeacherProfileScreen(teacher: TeacherRecord, onBack: () -> Unit) {
                 .verticalScroll(rememberScrollState())
         ) {
             // 1. Basic Information
-            Text(text = "Basic Information", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFF252238))
+            Text(
+                text = "Basic Information",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF252238)
+            )
             Spacer(modifier = Modifier.height(8.dp))
             IndiumCard(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text(text = "Name: ${teacher.name}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        text = "Name: ${teacher.name}",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
                     if (teacher.subject.isNotBlank()) {
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text(text = "Subject/Specialization: ${teacher.subject}", color = Color.Gray)
+                        Text(
+                            text = "Subject/Specialization: ${teacher.subject}",
+                            color = Color.Gray
+                        )
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(text = "Role: Registered Teacher", color = Color.Gray)
-                    
+
                     if (teacher.mobile.isNotBlank()) {
                         Spacer(modifier = Modifier.height(12.dp))
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.clickable {
                                 try {
-                                    val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${teacher.mobile}"))
+                                    val intent = Intent(
+                                        Intent.ACTION_DIAL,
+                                        Uri.parse("tel:${teacher.mobile}")
+                                    )
                                     context.startActivity(intent)
-                                } catch (e: Exception) {}
+                                } catch (e: Exception) {
+                                }
                             }
                         ) {
-                            Icon(imageVector = Icons.Default.Call, contentDescription = "Call", modifier = Modifier.size(16.dp), tint = Color(0xFF4CAF50))
+                            Icon(
+                                imageVector = Icons.Default.Call,
+                                contentDescription = "Call",
+                                modifier = Modifier.size(16.dp),
+                                tint = Color(0xFF4CAF50)
+                            )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text(text = teacher.mobile, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, textDecoration = TextDecoration.Underline), color = Color(0xFF4CAF50))
+                            Text(
+                                text = teacher.mobile,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    textDecoration = TextDecoration.Underline
+                                ),
+                                color = Color(0xFF4CAF50)
+                            )
                         }
                     }
                 }
@@ -10093,39 +11645,76 @@ fun AdminTeacherProfileScreen(teacher: TeacherRecord, onBack: () -> Unit) {
             Spacer(modifier = Modifier.height(24.dp))
 
             // 2. Attendance History
-            Text(text = "Attendance History", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFF252238))
+            Text(
+                text = "Attendance History",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF252238)
+            )
             Spacer(modifier = Modifier.height(8.dp))
             if (isLoadingAttendance) {
-                Box(modifier = Modifier.fillMaxWidth().height(80.dp), contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(80.dp),
+                    contentAlignment = Alignment.Center
+                ) {
                     CircularProgressIndicator(color = Color(0xFF7C4DFF))
                 }
             } else if (attendanceError.isNotEmpty()) {
-                Text(text = attendanceError, color = Color.Red, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    text = attendanceError,
+                    color = Color.Red,
+                    style = MaterialTheme.typography.bodyMedium
+                )
             } else if (attendanceList.isEmpty()) {
-                Text(text = "No logs found.", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    text = "No logs found.",
+                    color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall
+                )
             } else {
                 attendanceList.forEach { log ->
                     Card(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        colors = CardColors(containerColor = Color.White, contentColor = Color.Unspecified, disabledContainerColor = Color.Unspecified, disabledContentColor = Color.Unspecified)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        colors = CardColors(
+                            containerColor = Color.White,
+                            contentColor = Color.Unspecified,
+                            disabledContainerColor = Color.Unspecified,
+                            disabledContentColor = Color.Unspecified
+                        )
                     ) {
                         Row(
-                            modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                            modifier = Modifier
+                                .padding(12.dp)
+                                .fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column {
                                 Text(text = log.date, fontWeight = FontWeight.Medium)
-                                Text(text = "IN: ${log.inTime.ifBlank { "--:--" }} • OUT: ${log.outTime.ifBlank { "--:--" }}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                Text(
+                                    text = "IN: ${log.inTime.ifBlank { "--:--" }} • OUT: ${log.outTime.ifBlank { "--:--" }}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.Gray
+                                )
                             }
                             Surface(
-                                color = if(log.status.equals("Present", ignoreCase = true)) Color(0xFF4CAF50).copy(alpha = 0.1f) else Color.Red.copy(alpha = 0.1f),
+                                color = if (log.status.equals("Present", ignoreCase = true)) Color(
+                                    0xFF4CAF50
+                                ).copy(alpha = 0.1f) else Color.Red.copy(alpha = 0.1f),
                                 shape = RoundedCornerShape(4.dp)
-                              ) {
+                            ) {
                                 Text(
                                     text = log.status.ifBlank { "Logged" },
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                    color = if(log.status.equals("Present", ignoreCase = true)) Color(0xFF4CAF50) else Color.Red,
+                                    color = if (log.status.equals(
+                                            "Present",
+                                            ignoreCase = true
+                                        )
+                                    ) Color(0xFF4CAF50) else Color.Red,
                                     fontWeight = FontWeight.Bold,
                                     style = MaterialTheme.typography.labelSmall
                                 )
@@ -10138,21 +11727,46 @@ fun AdminTeacherProfileScreen(teacher: TeacherRecord, onBack: () -> Unit) {
             Spacer(modifier = Modifier.height(24.dp))
 
             // 3. Leave History
-            Text(text = "Leave History", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFF252238))
+            Text(
+                text = "Leave History",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF252238)
+            )
             Spacer(modifier = Modifier.height(8.dp))
             if (isLoadingLeave) {
-                Box(modifier = Modifier.fillMaxWidth().height(80.dp), contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(80.dp),
+                    contentAlignment = Alignment.Center
+                ) {
                     CircularProgressIndicator(color = Color(0xFF7C4DFF))
                 }
             } else if (leaveError.isNotEmpty()) {
-                Text(text = leaveError, color = Color.Red, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    text = leaveError,
+                    color = Color.Red,
+                    style = MaterialTheme.typography.bodyMedium
+                )
             } else if (leaveList.isEmpty()) {
-                Text(text = "No leave requests found.", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    text = "No leave requests found.",
+                    color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall
+                )
             } else {
                 leaveList.forEach { record ->
                     Card(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        colors = CardColors(containerColor = Color.White, contentColor = Color.Unspecified, disabledContainerColor = Color.Unspecified, disabledContentColor = Color.Unspecified)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        colors = CardColors(
+                            containerColor = Color.White,
+                            contentColor = Color.Unspecified,
+                            disabledContainerColor = Color.Unspecified,
+                            disabledContentColor = Color.Unspecified
+                        )
                     ) {
                         Column(
                             modifier = Modifier
@@ -10165,9 +11779,12 @@ fun AdminTeacherProfileScreen(teacher: TeacherRecord, onBack: () -> Unit) {
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(text = formatLeaveDateOnly(record.date),fontWeight = FontWeight.Medium)
+                                Text(
+                                    text = formatLeaveDateOnly(record.date),
+                                    fontWeight = FontWeight.Medium
+                                )
                                 Surface(
-                                    color = when(record.status.uppercase()) {
+                                    color = when (record.status.uppercase()) {
                                         "APPROVED" -> Color(0xFF4CAF50).copy(alpha = 0.1f)
                                         "REJECTED" -> Color.Red.copy(alpha = 0.1f)
                                         else -> Color(0xFF7C4DFF).copy(alpha = 0.1f)
@@ -10176,8 +11793,11 @@ fun AdminTeacherProfileScreen(teacher: TeacherRecord, onBack: () -> Unit) {
                                 ) {
                                     Text(
                                         text = record.status,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                        color = when(record.status.uppercase()) {
+                                        modifier = Modifier.padding(
+                                            horizontal = 8.dp,
+                                            vertical = 4.dp
+                                        ),
+                                        color = when (record.status.uppercase()) {
                                             "APPROVED" -> Color(0xFF4CAF50)
                                             "REJECTED" -> Color.Red
                                             else -> Color(0xFF7C4DFF)
@@ -10189,13 +11809,24 @@ fun AdminTeacherProfileScreen(teacher: TeacherRecord, onBack: () -> Unit) {
                             }
                             if (record.details.isNotBlank()) {
                                 Spacer(modifier = Modifier.height(4.dp))
-                                Text(text = record.details, style = MaterialTheme.typography.bodySmall, color = Color.DarkGray)
+                                Text(
+                                    text = record.details,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.DarkGray
+                                )
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Applied on: ${formatLeaveDisplayDate(formatLeaveDisplayDate(record.submissionDate))}",
+                                text = "Applied on: ${
+                                    formatLeaveDisplayDate(
+                                        formatLeaveDisplayDate(
+                                            record.submissionDate
+                                        )
+                                    )
+                                }",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color.Gray)
+                                color = Color.Gray
+                            )
                         }
                     }
                 }
@@ -10297,7 +11928,9 @@ fun AdminTeachersScreen(onTeacherClick: (TeacherRecord) -> Unit, onBack: () -> U
             }
         } else {
             IndiumCard(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp),
                 containerColor = Color(0xFF673AB7).copy(alpha = 0.05f)
             ) {
                 Text(
@@ -10313,7 +11946,9 @@ fun AdminTeachersScreen(onTeacherClick: (TeacherRecord) -> Unit, onBack: () -> U
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(teachersList) { teacher ->
                     IndiumCard(
-                        modifier = Modifier.fillMaxWidth().clickable { onTeacherClick(teacher) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onTeacherClick(teacher) },
                         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
@@ -10323,7 +11958,7 @@ fun AdminTeachersScreen(onTeacherClick: (TeacherRecord) -> Unit, onBack: () -> U
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF252238)
                             )
-                            
+
                             if (teacher.subject.isNotBlank()) {
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -10348,9 +11983,13 @@ fun AdminTeachersScreen(onTeacherClick: (TeacherRecord) -> Unit, onBack: () -> U
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.clickable {
                                         try {
-                                            val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${teacher.mobile}"))
+                                            val intent = Intent(
+                                                Intent.ACTION_DIAL,
+                                                Uri.parse("tel:${teacher.mobile}")
+                                            )
                                             context.startActivity(intent)
-                                        } catch (e: Exception) {}
+                                        } catch (e: Exception) {
+                                        }
                                     }
                                 ) {
                                     Icon(
@@ -10390,7 +12029,8 @@ fun AdminTodayLecturesScreen(
     var date by remember { mutableStateOf("") }
     var lectures by remember { mutableStateOf<List<TodayLecture>>(emptyList()) }
 
-    val scriptUrl = "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec"
+    val scriptUrl =
+        "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec"
 
     LaunchedEffect(Unit) {
         try {
@@ -10419,14 +12059,16 @@ fun AdminTodayLecturesScreen(
                     val resultList = mutableListOf<TodayLecture>()
                     for (i in 0 until jsonLectures.length()) {
                         val item = jsonLectures.getJSONObject(i)
-                        resultList.add(TodayLecture(
-                            time = item.optString("time"),
-                            className = item.optString("className"),
-                            subject = item.optString("subject"),
-                            teacher = item.optString("teacher"),
-                            adjusted = item.optBoolean("adjusted", false),
-                            originalTeacher = item.optString("originalTeacher", "")
-                        ))
+                        resultList.add(
+                            TodayLecture(
+                                time = item.optString("time"),
+                                className = item.optString("className"),
+                                subject = item.optString("subject"),
+                                teacher = item.optString("teacher"),
+                                adjusted = item.optBoolean("adjusted", false),
+                                originalTeacher = item.optString("originalTeacher", "")
+                            )
+                        )
                     }
                     lectures = resultList
                     errorMessage = ""
@@ -10461,9 +12103,17 @@ fun AdminTodayLecturesScreen(
                     contentColor = Color.White
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text(text = "Today's All Lectures", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
+                        Text(
+                            text = "Today's All Lectures",
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                        )
                         if (day.isNotBlank()) {
-                            Text(text = "$day • $date", style = MaterialTheme.typography.bodyMedium.copy(color = Color.White.copy(alpha = 0.8f)))
+                            Text(
+                                text = "$day • $date",
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    color = Color.White.copy(alpha = 0.8f)
+                                )
+                            )
                         }
                     }
                 }
@@ -10472,16 +12122,27 @@ fun AdminTodayLecturesScreen(
 
                 if (errorMessage.isNotEmpty() && lectures.isEmpty()) {
                     IndiumCard(modifier = Modifier.fillMaxWidth()) {
-                        Text(text = errorMessage, modifier = Modifier.padding(16.dp), color = Color.Red, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = errorMessage,
+                            modifier = Modifier.padding(16.dp),
+                            color = Color.Red,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 } else if (lectures.isEmpty()) {
                     IndiumCard(modifier = Modifier.fillMaxWidth()) {
-                        Text(text = "No lectures scheduled for today across the academy.", modifier = Modifier.padding(16.dp), color = Color.Gray)
+                        Text(
+                            text = "No lectures scheduled for today across the academy.",
+                            modifier = Modifier.padding(16.dp),
+                            color = Color.Gray
+                        )
                     }
                 } else {
                     lectures.forEach { lecture ->
                         IndiumCard(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp),
                             containerColor = if (lecture.adjusted) Color(0xFFFFF3E0) else Color.White
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
@@ -10490,7 +12151,11 @@ fun AdminTodayLecturesScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(text = lecture.time, fontWeight = FontWeight.ExtraBold, color = Color(0xFF7C4DFF))
+                                    Text(
+                                        text = lecture.time,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color(0xFF7C4DFF)
+                                    )
                                     if (lecture.adjusted) {
                                         Surface(
                                             color = Color(0xFFE65100).copy(alpha = 0.1f),
@@ -10498,7 +12163,10 @@ fun AdminTodayLecturesScreen(
                                         ) {
                                             Text(
                                                 text = "ADJUSTED",
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                modifier = Modifier.padding(
+                                                    horizontal = 6.dp,
+                                                    vertical = 2.dp
+                                                ),
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = Color(0xFFE65100),
                                                 fontWeight = FontWeight.Bold
@@ -10507,11 +12175,23 @@ fun AdminTodayLecturesScreen(
                                     }
                                 }
                                 Spacer(modifier = Modifier.height(6.dp))
-                                Text(text = "${lecture.className} • ${lecture.subject}", fontWeight = FontWeight.Bold, color = Color(0xFF252238))
+                                Text(
+                                    text = "${lecture.className} • ${lecture.subject}",
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF252238)
+                                )
                                 Spacer(modifier = Modifier.height(4.dp))
-                                Text(text = "Teacher: ${lecture.teacher}", style = MaterialTheme.typography.bodySmall, color = Color.DarkGray)
+                                Text(
+                                    text = "Teacher: ${lecture.teacher}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.DarkGray
+                                )
                                 if (lecture.adjusted && lecture.originalTeacher.isNotBlank()) {
-                                    Text(text = "Original Teacher: ${lecture.originalTeacher}", style = MaterialTheme.typography.labelSmall, color = Color(0xFFE65100))
+                                    Text(
+                                        text = "Original Teacher: ${lecture.originalTeacher}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color(0xFFE65100)
+                                    )
                                 }
                             }
                         }
@@ -10539,7 +12219,8 @@ fun AdminWeeklyTimetableScreen(
     var selectedDay by remember { mutableStateOf("All") }
 
     val days = listOf("All", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
-    val scriptUrl = "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec"
+    val scriptUrl =
+        "https://script.google.com/macros/s/AKfycbzlSejr1rTZ4yEDXVSskAyQAy5ZljPjyRfqbHmF9BsVkO0ZS770z0b39pNYFZwT3vLTCw/exec"
 
     fun loadTimetable(isRefresh: Boolean = false) {
         if (isRefresh) refreshing = true else loading = true
@@ -10568,8 +12249,15 @@ fun AdminWeeklyTimetableScreen(
                         if (json.optBoolean("success", false)) {
                             val daysJson = json.optJSONObject("timetable") ?: JSONObject()
                             val loadedData = mutableMapOf<String, List<TodayLecture>>()
-                            val weekdayList = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
-                            
+                            val weekdayList = listOf(
+                                "Monday",
+                                "Tuesday",
+                                "Wednesday",
+                                "Thursday",
+                                "Friday",
+                                "Saturday"
+                            )
+
                             weekdayList.forEach { day ->
                                 val dayArray = daysJson.optJSONArray(day)
                                 if (dayArray != null) {
@@ -10583,7 +12271,10 @@ fun AdminWeeklyTimetableScreen(
                                                 subject = item.optString("subject"),
                                                 teacher = item.optString("teacher"),
                                                 adjusted = item.optBoolean("adjusted", false),
-                                                originalTeacher = item.optString("originalTeacher", "")
+                                                originalTeacher = item.optString(
+                                                    "originalTeacher",
+                                                    ""
+                                                )
                                             )
                                         )
                                     }
@@ -10630,10 +12321,21 @@ fun AdminWeeklyTimetableScreen(
             }
         } else if (errorMessage.isNotBlank() && timetableData.isEmpty()) {
             IndiumCard(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(text = "Unable to refresh. Please try again.", color = Color.Red, fontWeight = FontWeight.Bold)
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Unable to refresh. Please try again.",
+                        color = Color.Red,
+                        fontWeight = FontWeight.Bold
+                    )
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(text = errorMessage, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text(
+                        text = errorMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
                     Spacer(modifier = Modifier.height(12.dp))
                     IndiumButton(
                         text = "RETRY",
@@ -10650,22 +12352,40 @@ fun AdminWeeklyTimetableScreen(
                     contentColor = Color.White
                 ) {
                     Row(
-                        modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                        modifier = Modifier
+                            .padding(16.dp)
+                            .fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
-                            Text(text = "Weekly Timetable (Academy)", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
-                            Text(text = "All classes & teachers schedule", style = MaterialTheme.typography.bodyMedium.copy(color = Color.White.copy(alpha = 0.8f)))
+                            Text(
+                                text = "Weekly Timetable (Academy)",
+                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                            )
+                            Text(
+                                text = "All classes & teachers schedule",
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    color = Color.White.copy(alpha = 0.8f)
+                                )
+                            )
                         }
                         IconButton(
                             onClick = { if (!refreshing) loadTimetable(true) },
                             enabled = !refreshing
                         ) {
                             if (refreshing) {
-                                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White, strokeWidth = 2.dp)
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.dp
+                                )
                             } else {
-                                Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh Timetable", tint = Color.White)
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Refresh Timetable",
+                                    tint = Color.White
+                                )
                             }
                         }
                     }
@@ -10675,7 +12395,9 @@ fun AdminWeeklyTimetableScreen(
 
                 // Day Selector Chips
                 Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     days.forEach { day ->
@@ -10695,7 +12417,12 @@ fun AdminWeeklyTimetableScreen(
 
                 if (errorMessage.isNotEmpty()) {
                     IndiumCard(modifier = Modifier.fillMaxWidth()) {
-                        Text(text = errorMessage, modifier = Modifier.padding(16.dp), color = Color.Red, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = errorMessage,
+                            modifier = Modifier.padding(16.dp),
+                            color = Color.Red,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 } else {
                     val displayDays = if (selectedDay == "All") {
@@ -10715,14 +12442,18 @@ fun AdminWeeklyTimetableScreen(
                                 ),
                                 modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp)
                             )
-                            
+
                             lectures.forEach { lecture ->
                                 IndiumCard(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp),
                                     containerColor = if (lecture.adjusted) Color(0xFFFFF3E0) else Color.White
                                 ) {
                                     Row(
-                                        modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                                        modifier = Modifier
+                                            .padding(16.dp)
+                                            .fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
@@ -10737,7 +12468,9 @@ fun AdminWeeklyTimetableScreen(
                                             Spacer(modifier = Modifier.height(4.dp))
                                             Text(
                                                 text = "Teacher: ${lecture.teacher}",
-                                                style = MaterialTheme.typography.bodySmall.copy(color = Color.Gray)
+                                                style = MaterialTheme.typography.bodySmall.copy(
+                                                    color = Color.Gray
+                                                )
                                             )
                                             if (lecture.adjusted && lecture.originalTeacher.isNotBlank()) {
                                                 Text(
@@ -10765,7 +12498,10 @@ fun AdminWeeklyTimetableScreen(
                                                 ) {
                                                     Text(
                                                         text = "ADJUSTED",
-                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                                        modifier = Modifier.padding(
+                                                            horizontal = 4.dp,
+                                                            vertical = 2.dp
+                                                        ),
                                                         style = MaterialTheme.typography.labelSmall,
                                                         color = Color(0xFFE65100),
                                                         fontWeight = FontWeight.Bold
@@ -10779,7 +12515,7 @@ fun AdminWeeklyTimetableScreen(
                         }
                     }
                 }
-                
+
                 Spacer(modifier = Modifier.height(24.dp))
                 IndiumButton(text = "BACK", onClick = onBack)
                 Spacer(modifier = Modifier.height(24.dp))
