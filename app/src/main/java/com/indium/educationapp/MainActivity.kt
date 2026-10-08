@@ -10988,6 +10988,10 @@ fun TeacherStudentsScreen(userRole: String = "Teacher", onBack: () -> Unit) {
 
 @Composable
 fun StudentProfileScreen(student: SheetStudent, onBack: () -> Unit) {
+
+        BackHandler {
+            onBack()
+        }
     val context = LocalContext.current
     val scriptUrl =
         "https://script.google.com/macros/s/AKfycbwbBEeUDm0gY_mCuPUJC04sw-O1aWlTTGbyu-x4yhl-BOLbUIoHD4cqWuuS_pNKRSCi/exec"
@@ -11406,7 +11410,12 @@ fun StudentProfileScreen(student: SheetStudent, onBack: () -> Unit) {
 
 @Composable
 fun AdminTeacherProfileScreen(teacher: TeacherRecord, onBack: () -> Unit) {
-    val context = LocalContext.current
+
+        BackHandler {
+            onBack()
+        }
+
+        val context = LocalContext.current
     var attendanceList by remember { mutableStateOf<List<TeacherAttendanceRecord>>(emptyList()) }
     var leaveList by remember { mutableStateOf<List<LeaveHistoryRecord>>(emptyList()) }
     var selectedLeaveRecord by remember { mutableStateOf<LeaveHistoryRecord?>(null) }
