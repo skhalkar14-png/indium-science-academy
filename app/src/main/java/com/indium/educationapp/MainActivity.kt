@@ -10,13 +10,21 @@ import androidx.activity.result.contract.ActivityResultContracts
 import java.io.ByteArrayOutputStream
 import java.io.FileOutputStream
 import java.util.UUID
+import android.Manifest
+import android.app.AlarmManager
 import android.app.DatePickerDialog
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Intent
 import android.net.Uri
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.Query
 import android.content.Context
+import android.content.pm.PackageManager
 import android.content.SharedPreferences
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -48,6 +56,8 @@ import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -113,6 +123,238 @@ object CurrentUser {
     var rollNo: String = ""
 }
 
+// Persistent session is intentionally limited to teachers.
+// Never save the password; Firestore credentials are checked only at login.
+private const val SESSION_PREFS_NAME = "indium_teacher_session"
+private const val SESSION_ACTIVE_KEY = "session_active"
+
+private fun saveTeacherSession(context: Context) {
+    if (!CurrentUser.role.equals("Teacher", ignoreCase = true)) return
+
+    context.getSharedPreferences(SESSION_PREFS_NAME, Context.MODE_PRIVATE)
+        .edit()
+        .putBoolean(SESSION_ACTIVE_KEY, true)
+        .putString("role", CurrentUser.role)
+        .putString("teacherName", CurrentUser.teacherName)
+        .putString("mobile", CurrentUser.mobile)
+        .putString("name", CurrentUser.name)
+        .putString("className", CurrentUser.className)
+        .putString("division", CurrentUser.division)
+        .putString("board", CurrentUser.board)
+        .putString("rollNo", CurrentUser.rollNo)
+        .apply()
+}
+
+private fun restoreTeacherSession(context: Context): Boolean {
+    val prefs = context.getSharedPreferences(SESSION_PREFS_NAME, Context.MODE_PRIVATE)
+    val savedRole = prefs.getString("role", "") ?: ""
+
+    if (!prefs.getBoolean(SESSION_ACTIVE_KEY, false) ||
+        !savedRole.equals("Teacher", ignoreCase = true)
+    ) {
+        return false
+    }
+
+    CurrentUser.role = savedRole
+    CurrentUser.teacherName = prefs.getString("teacherName", "") ?: ""
+    CurrentUser.mobile = prefs.getString("mobile", "") ?: ""
+    CurrentUser.name = prefs.getString("name", "") ?: ""
+    CurrentUser.className = prefs.getString("className", "") ?: ""
+    CurrentUser.division = prefs.getString("division", "") ?: ""
+    CurrentUser.board = prefs.getString("board", "") ?: ""
+    CurrentUser.rollNo = prefs.getString("rollNo", "") ?: ""
+
+    // Do not restore an incomplete session.
+    if (CurrentUser.name.isBlank() || CurrentUser.mobile.isBlank()) {
+        prefs.edit().clear().apply()
+        CurrentUser.role = ""
+        CurrentUser.teacherName = ""
+        CurrentUser.mobile = ""
+        CurrentUser.name = ""
+        CurrentUser.className = ""
+        CurrentUser.division = ""
+        CurrentUser.board = ""
+        CurrentUser.rollNo = ""
+        return false
+    }
+
+    if (CurrentUser.teacherName.isBlank()) CurrentUser.teacherName = CurrentUser.name
+    return true
+}
+
+private fun clearSavedTeacherSession(context: Context) {
+    context.getSharedPreferences(SESSION_PREFS_NAME, Context.MODE_PRIVATE)
+        .edit()
+        .clear()
+        .apply()
+}
+
+val IndiumDeepViolet = Color(0xFF673AB7)
+val IndiumLavender = Color(0xFF7C4DFF)
+val IndiumWhite = Color.White
+
+
+// ======================================================
+// TEACHER ATTENDANCE REMINDERS
+// These alarms are enabled after a successful teacher login.
+// Logging out does NOT cancel them. Same PendingIntent IDs
+// update existing alarms, preventing duplicate schedules.
+// ======================================================
+
+private const val REMINDER_PREFS = "indium_teacher_reminders"
+private const val REMINDERS_ENABLED_KEY = "teacher_reminders_enabled"
+private const val REMINDER_CHANNEL_ID = "teacher_attendance_reminders"
+private const val REMINDER_ACTION = "com.indium.educationapp.ATTENDANCE_REMINDER"
+private const val REMINDER_TYPE_EXTRA = "reminder_type"
+private const val REMINDER_REQUEST_430 = 430
+private const val REMINDER_REQUEST_830 = 830
+
+private fun areTeacherRemindersEnabled(context: Context): Boolean =
+    context.getSharedPreferences(REMINDER_PREFS, Context.MODE_PRIVATE)
+        .getBoolean(REMINDERS_ENABLED_KEY, false)
+
+private fun reminderPendingIntent(context: Context, requestCode: Int, type: String): PendingIntent {
+    val intent = Intent(context, AttendanceReminderReceiver::class.java).apply {
+        action = REMINDER_ACTION
+        putExtra(REMINDER_TYPE_EXTRA, type)
+    }
+    return PendingIntent.getBroadcast(
+        context,
+        requestCode,
+        intent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+}
+
+private fun scheduleOneReminder(context: Context, hour: Int, minute: Int, type: String, requestCode: Int) {
+    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+    val calendar = Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, hour)
+        set(Calendar.MINUTE, minute)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+        if (timeInMillis <= System.currentTimeMillis()) add(Calendar.DAY_OF_YEAR, 1)
+    }
+
+    val pendingIntent = reminderPendingIntent(context, requestCode, type)
+
+    // Use exact timing where Android permits it; otherwise retain a daily
+    // inexact alarm instead of failing to schedule the reminder entirely.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
+        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
+    } else {
+        alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
+    }
+}
+
+private fun scheduleNextReminder(context: Context, type: String) {
+    when (type) {
+        "check_in" -> scheduleOneReminder(context, 16, 30, "check_in", REMINDER_REQUEST_430)
+        "check_out" -> scheduleOneReminder(context, 20, 30, "check_out", REMINDER_REQUEST_830)
+    }
+}
+
+private fun ensureTeacherAttendanceRemindersScheduled(context: Context) {
+    context.getSharedPreferences(REMINDER_PREFS, Context.MODE_PRIVATE)
+        .edit()
+        .putBoolean(REMINDERS_ENABLED_KEY, true)
+        .apply()
+
+    // These request codes are stable; scheduling again replaces the existing alarm.
+    scheduleOneReminder(context, 16, 30, "check_in", REMINDER_REQUEST_430)
+    scheduleOneReminder(context, 20, 30, "check_out", REMINDER_REQUEST_830)
+}
+
+private fun createAttendanceReminderChannel(context: Context) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val channel = NotificationChannel(
+            REMINDER_CHANNEL_ID,
+            "Teacher attendance reminders",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Daily reminders to record teacher attendance in and out times"
+        }
+        manager.createNotificationChannel(channel)
+    }
+}
+
+class AttendanceReminderReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        val action = intent?.action.orEmpty()
+
+        if (action == Intent.ACTION_BOOT_COMPLETED ||
+            action == Intent.ACTION_TIME_CHANGED ||
+            action == Intent.ACTION_TIMEZONE_CHANGED
+        ) {
+            if (areTeacherRemindersEnabled(context)) {
+                ensureTeacherAttendanceRemindersScheduled(context)
+            }
+            return
+        }
+
+        if (action != REMINDER_ACTION || !areTeacherRemindersEnabled(context)) return
+
+        val type = intent?.getStringExtra(REMINDER_TYPE_EXTRA).orEmpty()
+        createAttendanceReminderChannel(context)
+
+        val title: String
+        val message: String
+        when (type) {
+            "check_in" -> {
+                title = "Teacher Attendance Reminder"
+                message = "It's 4:30 PM. Please record your attendance / IN time in Indium Education App."
+            }
+            "check_out" -> {
+                title = "Teacher Attendance Reminder"
+                message = "It's 8:30 PM. Please record your OUT time in Indium Education App."
+            }
+            "test" -> {
+                title = "Test Reminder Successful"
+                message = "Your Indium Education App notification test is working."
+            }
+            else -> return
+        }
+
+        // Android 13+ requires POST_NOTIFICATIONS permission.
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT < 33 ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        ) {
+            val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+            val contentIntent = launchIntent?.let {
+                PendingIntent.getActivity(
+                    context,
+                    if (type == "check_in") REMINDER_REQUEST_430 else REMINDER_REQUEST_830,
+                    it,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            }
+
+            val builder = NotificationCompat.Builder(context, REMINDER_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle(title)
+                .setContentText(message)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+
+            if (contentIntent != null) builder.setContentIntent(contentIntent)
+
+            notificationManager.notify(
+                if (type == "check_in") REMINDER_REQUEST_430 else REMINDER_REQUEST_830,
+                builder.build()
+            )
+        }
+
+        // Only daily reminders are rescheduled. A test reminder runs once.
+        if (type == "check_in" || type == "check_out") {
+            scheduleNextReminder(context, type)
+        }
+    }
+}
+
+
 // ======================================================
 // MAIN ACTIVITY
 // ======================================================
@@ -123,6 +365,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         FirebaseApp.initializeApp(this)
+
+        if (areTeacherRemindersEnabled(this)) {
+            ensureTeacherAttendanceRemindersScheduled(this)
+        }
 
         setContent {
             IndiumEducationAppTheme {
@@ -140,16 +386,30 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun IndiumApp() {
 
-    var selectedRole by remember {
-        mutableStateOf("")
+    val context = LocalContext.current
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { /* Permission result is handled by the system; alarms remain scheduled either way. */ }
+
+    // Restore a teacher session once when the app's UI is first created.
+    var loggedIn by remember {
+        mutableStateOf(restoreTeacherSession(context))
     }
 
-    var loggedIn by remember {
-        mutableStateOf(false)
+    var selectedRole by remember {
+        mutableStateOf(if (loggedIn) CurrentUser.role else "")
     }
 
     var showSignup by remember {
         mutableStateOf(false)
+    }
+
+    LaunchedEffect(loggedIn, selectedRole) {
+        if (loggedIn && selectedRole.equals("Teacher", ignoreCase = true) &&
+            areTeacherRemindersEnabled(context)
+        ) {
+            ensureTeacherAttendanceRemindersScheduled(context)
+        }
     }
 
     if (showSignup) {
@@ -174,6 +434,7 @@ fun IndiumApp() {
                     CurrentUser.division = ""
                     CurrentUser.board = ""
                     CurrentUser.rollNo = ""
+                    clearSavedTeacherSession(context)
                     loggedIn = false
                     selectedRole = ""
                 }
@@ -189,7 +450,20 @@ fun IndiumApp() {
                 selectedRole = it
             },
 
-            onLoginSuccess = {
+            onLoginSuccess = { role ->
+                selectedRole = role
+                if (role.equals("Teacher", ignoreCase = true)) {
+                    saveTeacherSession(context)
+                    ensureTeacherAttendanceRemindersScheduled(context)
+                    if (Build.VERSION.SDK_INT >= 33 &&
+                        ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.POST_NOTIFICATIONS
+                        ) != PackageManager.PERMISSION_GRANTED
+                    ) {
+                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                }
                 loggedIn = true
             },
 
@@ -1253,7 +1527,7 @@ fun AiAssistantScreen(
     val coroutineScope = rememberCoroutineScope()
     val listState = rememberLazyListState()
 
-    var messages by remember { mutableStateOf<List<AiChatMessage>>(emptyList()) }
+    var messages by remember { mutableStateOf(emptyList<AiChatMessage>()) }
     var inputText by remember { mutableStateOf("") }
     var isThinking by remember { mutableStateOf(false) }
     var selectedAttachment by remember { mutableStateOf<AiMediaAttachment?>(null) }
@@ -2396,11 +2670,11 @@ fun DashboardScreen(
     var selectedProfileTeacher by remember { mutableStateOf<TeacherRecord?>(null) }
 
     var dashboardSearchQuery by remember { mutableStateOf("") }
-    var globalStudents by remember { mutableStateOf<List<SheetStudent>>(emptyList()) }
-    var globalTeachers by remember { mutableStateOf<List<TeacherRecord>>(emptyList()) }
+    var globalStudents by remember { mutableStateOf(emptyList<SheetStudent>()) }
+    var globalTeachers by remember { mutableStateOf(emptyList<TeacherRecord>()) }
 
     var showNotificationCenter by remember { mutableStateOf(false) }
-    var globalNotifications by remember { mutableStateOf<List<AppNotification>>(emptyList()) }
+    var globalNotifications by remember { mutableStateOf(emptyList<AppNotification>()) }
     var notificationBadgeCount by remember { mutableStateOf(0) }
     val prefs =
         remember { context.getSharedPreferences("global_notification_prefs", Context.MODE_PRIVATE) }
@@ -2863,6 +3137,11 @@ fun DashboardScreen(
                     "Today's All Lectures" -> AdminTodayLecturesScreen(onBack = {
                         selectedScreen = null
                     })
+                    "Attendance Report" -> AdminAttendanceReportScreen(
+                        onBack = {
+                            selectedScreen = null
+                        }
+                    )
 
                     "Fees Structure" -> FeesScreen(onBack = { selectedScreen = null })
                     "Notices" -> NoticeBoardScreen(
@@ -2932,6 +3211,7 @@ fun DashboardScreen(
         "Admin" -> listOf(
             MenuItem("Weekly Timetable", Icons.Default.CalendarToday),
             MenuItem("Today's All Lectures", Icons.Default.Today),
+            MenuItem("Attendance Report", Icons.Default.Assessment),
             MenuItem("Fees Structure", Icons.Default.Payments),
             MenuItem("Notice Board", Icons.Default.Notifications)
         )
@@ -2964,6 +3244,62 @@ fun DashboardScreen(
                     targetBoundsMap["Notifications"] = coords.boundsInWindow()
                 }
             )
+        }
+
+        if (role.equals("Teacher", ignoreCase = true)) {
+            item(span = { GridItemSpan(2) }) {
+                OutlinedButton(
+                    onClick = {
+                        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+                        val testIntent = Intent(context, AttendanceReminderReceiver::class.java).apply {
+                            action = REMINDER_ACTION
+                            putExtra(REMINDER_TYPE_EXTRA, "test")
+                        }
+                        val testPendingIntent = PendingIntent.getBroadcast(
+                            context,
+                            999,
+                            testIntent,
+                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                        )
+                        val triggerAt = System.currentTimeMillis() + 60_000L
+                        try {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                                !alarmManager.canScheduleExactAlarms()
+                            ) {
+                                alarmManager.setAndAllowWhileIdle(
+                                    AlarmManager.RTC_WAKEUP,
+                                    triggerAt,
+                                    testPendingIntent
+                                )
+                            } else {
+                                alarmManager.setExactAndAllowWhileIdle(
+                                    AlarmManager.RTC_WAKEUP,
+                                    triggerAt,
+                                    testPendingIntent
+                                )
+                            }
+                            Toast.makeText(
+                                context,
+                                "Test reminder scheduled for about 1 minute from now.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(
+                                context,
+                                "Could not schedule test reminder: ${e.localizedMessage}",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp)
+                ) {
+                    Icon(Icons.Default.Notifications, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("TEST ATTENDANCE REMINDER (1 MIN)")
+                }
+            }
         }
 
         if (globalNotifications.isNotEmpty()) {
@@ -7027,23 +7363,6 @@ fun TeacherAttendanceScreen(
     }
 }
 
-// ======================================================
-// STUDENT ATTENDANCE FOR TEACHER
-// ======================================================
-
-// ======================================================
-// STUDENT ATTENDANCE FOR TEACHER
-// ======================================================
-
-data class SheetStudent(
-    val rollNo: String,
-    val studentName: String,
-    val mobileNo: String,
-    val standard: String,
-    val board: String
-)
-
-
 @Composable
 fun AttendanceHistoryScreen(
     selectedClass: String,
@@ -10989,9 +11308,9 @@ fun TeacherStudentsScreen(userRole: String = "Teacher", onBack: () -> Unit) {
 @Composable
 fun StudentProfileScreen(student: SheetStudent, onBack: () -> Unit) {
 
-        BackHandler {
-            onBack()
-        }
+    BackHandler {
+        onBack()
+    }
     val context = LocalContext.current
     val scriptUrl =
         "https://script.google.com/macros/s/AKfycbwbBEeUDm0gY_mCuPUJC04sw-O1aWlTTGbyu-x4yhl-BOLbUIoHD4cqWuuS_pNKRSCi/exec"
@@ -11411,11 +11730,11 @@ fun StudentProfileScreen(student: SheetStudent, onBack: () -> Unit) {
 @Composable
 fun AdminTeacherProfileScreen(teacher: TeacherRecord, onBack: () -> Unit) {
 
-        BackHandler {
-            onBack()
-        }
+    BackHandler {
+        onBack()
+    }
 
-        val context = LocalContext.current
+    val context = LocalContext.current
     var attendanceList by remember { mutableStateOf<List<TeacherAttendanceRecord>>(emptyList()) }
     var leaveList by remember { mutableStateOf<List<LeaveHistoryRecord>>(emptyList()) }
     var selectedLeaveRecord by remember { mutableStateOf<LeaveHistoryRecord?>(null) }
@@ -11886,6 +12205,14 @@ fun AdminTeacherProfileScreen(teacher: TeacherRecord, onBack: () -> Unit) {
     }
 }
 
+
+data class SheetStudent(
+    val rollNo: String,
+    val studentName: String,
+    val mobileNo: String,
+    val standard: String,
+    val board: String
+)
 
 data class TeacherRecord(
     val name: String,
@@ -12533,3 +12860,1104 @@ fun AdminWeeklyTimetableScreen(
     }
 }
 
+// ======================================================
+// ADMIN ATTENDANCE REPORT
+// ======================================================
+
+data class AdminStudentAttendanceRecord(
+    val standard: String,
+    val rollNo: String,
+    val studentName: String,
+    val status: String,
+    val markedBy: String
+)
+
+data class AdminTeacherAttendanceRecord(
+    val teacherName: String,
+    val mobile: String,
+    val status: String,
+    val inTime: String,
+    val outTime: String
+)
+@Composable
+fun AdminAttendanceReportScreen(
+    onBack: () -> Unit
+) {
+
+    BackHandler {
+        onBack()
+    }
+
+    val context = LocalContext.current
+
+    // --------------------------------------------------
+    // STANDARD
+    // --------------------------------------------------
+
+    val standards = listOf(
+        "1st Standard",
+        "2nd Standard",
+        "3rd Standard",
+        "4th Standard",
+        "5th Standard",
+        "6th Standard",
+        "7th Standard",
+        "8th Standard",
+        "9th Standard",
+        "10th Standard"
+    )
+
+    var selectedStandard by remember {
+        mutableStateOf("")
+    }
+
+    var standardMenuExpanded by remember {
+        mutableStateOf(false)
+    }
+
+    // --------------------------------------------------
+    // DATE
+    // --------------------------------------------------
+
+    var selectedDate by remember {
+        mutableStateOf(
+            SimpleDateFormat(
+                "dd/MM/yyyy",
+                Locale.ENGLISH
+            ).format(Date())
+        )
+    }
+
+    // --------------------------------------------------
+    // STATE
+    // --------------------------------------------------
+
+    var isLoading by remember {
+        mutableStateOf(false)
+    }
+
+    var errorMessage by remember {
+        mutableStateOf("")
+    }
+
+    var hasSearched by remember {
+        mutableStateOf(false)
+    }
+    var attendanceTab by remember {
+        mutableStateOf(0)
+    }
+
+    var studentRecords by remember {
+        mutableStateOf<List<AdminStudentAttendanceRecord>>(
+            emptyList()
+        )
+    }
+    var teacherRecords by remember {
+        mutableStateOf<List<AdminTeacherAttendanceRecord>>(
+            emptyList()
+        )
+    }
+
+    val attendanceUrl =
+        "https://script.google.com/macros/s/AKfycbx3vXqB5Vs6DToJp5ArnnbuIGIvBzGwcLJFFUWtDrlBrD7dqLcRj7u89xNrskwPjrgu/exec"
+
+
+    // --------------------------------------------------
+    // LOAD ATTENDANCE
+    // --------------------------------------------------
+
+    fun loadAttendance() {
+
+        if (selectedStandard.isBlank()) {
+            errorMessage = "Please select a standard."
+            return
+        }
+
+        isLoading = true
+        errorMessage = ""
+        hasSearched = true
+
+        CoroutineScope(Dispatchers.IO).launch {
+
+            try {
+
+                val encodedDate =
+                    URLEncoder.encode(
+                        selectedDate,
+                        "UTF-8"
+                    )
+
+                val encodedStandard =
+                    URLEncoder.encode(
+                        selectedStandard,
+                        "UTF-8"
+                    )
+
+                val urlString =
+                    "$attendanceUrl" +
+                            "?action=adminAttendanceReport" +
+                            "&date=$encodedDate" +
+                            "&standard=$encodedStandard"
+
+                val response =
+                    withContext(Dispatchers.IO) {
+
+                        val connection =
+                            URL(urlString)
+                                .openConnection()
+                                    as HttpURLConnection
+
+                        connection.requestMethod = "GET"
+
+                        connection.connectTimeout = 10000
+                        connection.readTimeout = 10000
+
+                        connection.instanceFollowRedirects = true
+
+                        try {
+
+                            if (
+                                connection.responseCode
+                                in 200..299
+                            ) {
+
+                                connection.inputStream
+                                    .bufferedReader()
+                                    .use {
+                                        it.readText()
+                                    }
+
+                            } else {
+                                null
+                            }
+
+                        } finally {
+
+                            connection.disconnect()
+                        }
+                    }
+
+
+                withContext(Dispatchers.Main) {
+
+                    if (response == null) {
+
+                        errorMessage =
+                            "Unable to reach attendance server."
+
+                        studentRecords =
+                            emptyList()
+
+                    } else {
+
+                        val json =
+                            JSONObject(response)
+
+                        if (
+                            json.optBoolean(
+                                "success",
+                                false
+                            )
+                        ) {
+
+                            val studentsArray =
+                                json.optJSONArray(
+                                    "studentAttendance"
+                                )
+                                    ?: JSONArray()
+
+                            val loadedStudents =
+                                mutableListOf<
+                                        AdminStudentAttendanceRecord
+                                        >()
+
+                            for (
+                            i in
+                            0 until studentsArray.length()
+                            ) {
+
+                                val item =
+                                    studentsArray
+                                        .getJSONObject(i)
+
+                                loadedStudents.add(
+
+                                    AdminStudentAttendanceRecord(
+
+                                        standard =
+                                            item.optString(
+                                                "standard"
+                                            ),
+
+                                        rollNo =
+                                            item.optString(
+                                                "rollNo"
+                                            ),
+
+                                        studentName =
+                                            item.optString(
+                                                "studentName"
+                                            ),
+
+                                        status =
+                                            item.optString(
+                                                "status"
+                                            ),
+
+                                        markedBy =
+                                            item.optString(
+                                                "markedBy"
+                                            )
+                                    )
+                                )
+                            }
+
+
+                            val teachersArray =
+                                json.optJSONArray(
+                                    "teacherAttendance"
+                                ) ?: JSONArray()
+
+                            val loadedTeachers =
+                                mutableListOf<AdminTeacherAttendanceRecord>()
+
+                            for (
+                            i in 0 until teachersArray.length()
+                            ) {
+
+                                val item =
+                                    teachersArray.getJSONObject(i)
+
+                                loadedTeachers.add(
+                                    AdminTeacherAttendanceRecord(
+
+                                        teacherName =
+                                            item.optString(
+                                                "teacherName"
+                                            ),
+
+                                        mobile =
+                                            item.optString(
+                                                "mobile"
+                                            ),
+
+                                        status =
+                                            item.optString(
+                                                "status"
+                                            ),
+
+                                        inTime =
+                                            item.optString(
+                                                "inTime"
+                                            ),
+
+                                        outTime =
+                                            item.optString(
+                                                "outTime"
+                                            )
+                                    )
+                                )
+                            }
+
+                            studentRecords =
+                                loadedStudents
+                            teacherRecords =
+                                loadedTeachers
+
+                            errorMessage = ""
+
+                        } else {
+
+                            errorMessage =
+                                json.optString(
+                                    "error",
+                                    "Unable to load attendance."
+                                )
+
+                            studentRecords =
+                                emptyList()
+
+                            teacherRecords =
+                                emptyList()
+                        }
+                    }
+
+                    isLoading = false
+                }
+
+            } catch (e: Exception) {
+
+                withContext(Dispatchers.Main) {
+
+                    errorMessage =
+                        "Error loading attendance: ${
+                            e.localizedMessage
+                                ?: "Please try again."
+                        }"
+
+                    studentRecords =
+                        emptyList()
+
+                    isLoading = false
+                }
+            }
+        }
+    }
+
+
+    // --------------------------------------------------
+    // SCREEN
+    // --------------------------------------------------
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Color(0xFFF7F4FF)
+            )
+            .padding(16.dp)
+    ) {
+
+        Text(
+            text = "Attendance Report",
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF673AB7)
+        )
+
+        Spacer(
+            modifier = Modifier.height(16.dp)
+        )
+
+
+        // ==================================================
+        // STANDARD SELECTOR
+        // ==================================================
+
+        Box(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+
+            OutlinedButton(
+                onClick = {
+                    standardMenuExpanded =
+                        true
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+
+                Text(
+                    text =
+                        if (
+                            selectedStandard.isBlank()
+                        ) {
+                            "Select Standard"
+                        } else {
+                            selectedStandard
+                        },
+                    fontWeight =
+                        FontWeight.Bold
+                )
+
+                Spacer(
+                    modifier = Modifier.weight(1f)
+                )
+
+                Text("▼")
+            }
+
+
+            DropdownMenu(
+                expanded = standardMenuExpanded,
+                onDismissRequest = {
+                    standardMenuExpanded =
+                        false
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+
+                standards.forEach { standard ->
+
+                    DropdownMenuItem(
+
+                        text = {
+                            Text(
+                                text = standard,
+                                fontWeight =
+                                    FontWeight.Bold
+                            )
+                        },
+
+                        onClick = {
+
+                            selectedStandard =
+                                standard
+
+                            standardMenuExpanded =
+                                false
+
+                            errorMessage = ""
+                        }
+                    )
+                }
+            }
+        }
+
+
+        Spacer(
+            modifier = Modifier.height(12.dp)
+        )
+
+
+        // ==================================================
+        // DATE
+        // ==================================================
+
+        OutlinedButton(
+
+            onClick = {
+
+                val parts =
+                    selectedDate.split("/")
+
+                val day =
+                    parts
+                        .getOrNull(0)
+                        ?.toIntOrNull()
+                        ?: Calendar.getInstance()
+                            .get(Calendar.DAY_OF_MONTH)
+
+                val month =
+                    (
+                            parts
+                                .getOrNull(1)
+                                ?.toIntOrNull()
+                                ?: (
+                                        Calendar.getInstance()
+                                            .get(Calendar.MONTH) + 1
+                                        )
+                            ) - 1
+
+                val year =
+                    parts
+                        .getOrNull(2)
+                        ?.toIntOrNull()
+                        ?: Calendar.getInstance()
+                            .get(Calendar.YEAR)
+
+
+                DatePickerDialog(
+
+                    context,
+
+                    { _, selectedYear,
+                      selectedMonth,
+                      selectedDay ->
+
+                        selectedDate =
+                            String.format(
+                                Locale.ENGLISH,
+                                "%02d/%02d/%04d",
+                                selectedDay,
+                                selectedMonth + 1,
+                                selectedYear
+                            )
+                    },
+
+                    year,
+                    month,
+                    day
+
+                ).show()
+            },
+
+            modifier = Modifier.fillMaxWidth()
+        ) {
+
+            Text(
+                text =
+                    "📅 Date: $selectedDate",
+                fontWeight =
+                    FontWeight.Bold
+            )
+        }
+
+
+        Spacer(
+            modifier = Modifier.height(12.dp)
+        )
+
+
+        // ==================================================
+        // VIEW BUTTON
+        // ==================================================
+
+        Button(
+
+            onClick = {
+                loadAttendance()
+            },
+
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+
+            enabled =
+                !isLoading &&
+                        selectedStandard.isNotBlank()
+        ) {
+
+            Text(
+                text =
+                    if (isLoading)
+                        "LOADING..."
+                    else
+                        "VIEW ATTENDANCE",
+
+                fontSize = 16.sp,
+                fontWeight =
+                    FontWeight.Bold
+            )
+        }
+
+
+        Spacer(
+            modifier = Modifier.height(12.dp)
+        )
+
+
+        // ==================================================
+        // ERROR
+        // ==================================================
+
+        if (errorMessage.isNotBlank()) {
+
+            Text(
+                text = errorMessage,
+                color = Color.Red,
+                fontWeight =
+                    FontWeight.Bold,
+                modifier =
+                    Modifier.padding(8.dp)
+            )
+        }
+
+
+        // ==================================================
+        // LOADING
+        // ==================================================
+
+        if (isLoading) {
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+
+                contentAlignment =
+                    Alignment.Center
+            ) {
+
+                CircularProgressIndicator()
+            }
+
+        } else if (hasSearched) {
+
+            // ==================================================
+            // SUMMARY
+            // ==================================================
+
+            val presentCount =
+                studentRecords.count {
+                    it.status.equals(
+                        "PRESENT",
+                        ignoreCase = true
+                    ) ||
+                            it.status.equals(
+                                "P",
+                                ignoreCase = true
+                            )
+                }
+
+            val absentCount =
+                studentRecords.size -
+                        presentCount
+
+
+            Text(
+                text =
+                    "$selectedStandard  •  $selectedDate",
+
+                fontSize = 18.sp,
+                fontWeight =
+                    FontWeight.Bold,
+
+                color =
+                    Color(0xFF673AB7),
+
+                modifier =
+                    Modifier.padding(
+                        vertical = 8.dp
+                    )
+            )
+
+
+            Row(
+                modifier =
+                    Modifier.fillMaxWidth(),
+
+                horizontalArrangement =
+                    Arrangement.spacedBy(8.dp)
+            ) {
+
+                IndiumCard(
+                    modifier =
+                        Modifier.weight(1f)
+                ) {
+
+                    Column(
+                        modifier =
+                            Modifier.padding(12.dp),
+
+                        horizontalAlignment =
+                            Alignment.CenterHorizontally
+                    ) {
+
+                        Text(
+                            text =
+                                "${studentRecords.size}",
+
+                            fontSize = 22.sp,
+                            fontWeight =
+                                FontWeight.Bold
+                        )
+
+                        Text("Marked")
+                    }
+                }
+
+
+                IndiumCard(
+                    modifier =
+                        Modifier.weight(1f)
+                ) {
+
+                    Column(
+                        modifier =
+                            Modifier.padding(12.dp),
+
+                        horizontalAlignment =
+                            Alignment.CenterHorizontally
+                    ) {
+
+                        Text(
+                            text =
+                                "$presentCount",
+
+                            fontSize = 22.sp,
+                            fontWeight =
+                                FontWeight.Bold,
+
+                            color =
+                                Color(0xFF2E7D32)
+                        )
+
+                        Text("Present")
+                    }
+                }
+
+
+                IndiumCard(
+                    modifier =
+                        Modifier.weight(1f)
+                ) {
+
+                    Column(
+                        modifier =
+                            Modifier.padding(12.dp),
+
+                        horizontalAlignment =
+                            Alignment.CenterHorizontally
+                    ) {
+
+                        Text(
+                            text =
+                                "$absentCount",
+
+                            fontSize = 22.sp,
+                            fontWeight =
+                                FontWeight.Bold,
+
+                            color = Color.Red
+                        )
+
+                        Text("Absent")
+                    }
+                }
+            }
+
+
+            Spacer(
+                modifier = Modifier.height(12.dp)
+            )
+
+
+            // ==================================================
+            // ATTENDANCE TABS
+            // ==================================================
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+
+                Button(
+                    onClick = {
+                        attendanceTab = 0
+                    },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor =
+                            if (attendanceTab == 0)
+                                Color(0xFF673AB7)
+                            else
+                                Color.LightGray
+                    )
+                ) {
+                    Text(
+                        text = "STUDENTS",
+                        fontWeight = FontWeight.Bold,
+                        color =
+                            if (attendanceTab == 0)
+                                Color.White
+                            else
+                                Color.DarkGray
+                    )
+                }
+
+                Button(
+                    onClick = {
+                        attendanceTab = 1
+                    },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor =
+                            if (attendanceTab == 1)
+                                Color(0xFF673AB7)
+                            else
+                                Color.LightGray
+                    )
+                ) {
+                    Text(
+                        text = "TEACHERS",
+                        fontWeight = FontWeight.Bold,
+                        color =
+                            if (attendanceTab == 1)
+                                Color.White
+                            else
+                                Color.DarkGray
+                    )
+                }
+            }
+
+            Spacer(
+                modifier = Modifier.height(8.dp)
+            )
+
+            // ==================================================
+            // ATTENDANCE LIST
+            // ==================================================
+
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+
+                if (attendanceTab == 0) {
+
+                    // ==================================================
+                    // STUDENT ATTENDANCE
+                    // ==================================================
+
+                    item {
+
+                        Text(
+                            text =
+                                "STUDENT ATTENDANCE (${studentRecords.size})",
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF673AB7)
+                        )
+                    }
+
+                    if (studentRecords.isEmpty()) {
+
+                        item {
+
+                            IndiumCard(
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+
+                                Text(
+                                    text =
+                                        "No attendance marked for this standard and date.",
+                                    modifier = Modifier.padding(16.dp),
+                                    color = Color.Gray
+                                )
+                            }
+                        }
+
+                    } else {
+
+                        items(studentRecords) { record ->
+
+                            IndiumCard(
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalAlignment =
+                                        Alignment.CenterVertically
+                                ) {
+
+                                    Column(
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+
+                                        Text(
+                                            text =
+                                                "${record.rollNo}. ${record.studentName}",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 16.sp
+                                        )
+
+                                        if (record.markedBy.isNotBlank()) {
+
+                                            Text(
+                                                text =
+                                                    "Marked by: ${record.markedBy}",
+                                                style =
+                                                    MaterialTheme.typography.bodySmall,
+                                                color = Color.Gray
+                                            )
+                                        }
+                                    }
+
+                                    val isPresent =
+                                        record.status.equals(
+                                            "PRESENT",
+                                            true
+                                        ) ||
+                                                record.status.equals(
+                                                    "P",
+                                                    true
+                                                )
+
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color =
+                                            if (isPresent)
+                                                Color(0xFFE8F5E9)
+                                            else
+                                                Color(0xFFFFEBEE)
+                                    ) {
+
+                                        Text(
+                                            text =
+                                                record.status.uppercase(),
+                                            modifier = Modifier.padding(
+                                                horizontal = 12.dp,
+                                                vertical = 7.dp
+                                            ),
+                                            fontWeight = FontWeight.Bold,
+                                            color =
+                                                if (isPresent)
+                                                    Color(0xFF2E7D32)
+                                                else
+                                                    Color.Red
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                } else {
+
+                    // ==================================================
+                    // TEACHER ATTENDANCE
+                    // ==================================================
+
+                    item {
+
+                        Text(
+                            text =
+                                "TEACHER ATTENDANCE (${teacherRecords.size})",
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF673AB7)
+                        )
+                    }
+
+                    if (teacherRecords.isEmpty()) {
+
+                        item {
+
+                            IndiumCard(
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+
+                                Text(
+                                    text =
+                                        "No teacher attendance found for this date.",
+                                    modifier = Modifier.padding(16.dp),
+                                    color = Color.Gray
+                                )
+                            }
+                        }
+
+                    } else {
+
+                        items(teacherRecords) { record ->
+
+                            IndiumCard(
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+
+                                Column(
+                                    modifier = Modifier.padding(14.dp)
+                                ) {
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement =
+                                            Arrangement.SpaceBetween,
+                                        verticalAlignment =
+                                            Alignment.CenterVertically
+                                    ) {
+
+                                        Text(
+                                            text = record.teacherName,
+                                            fontSize = 17.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.weight(1f)
+                                        )
+
+                                        val isPresent =
+                                            record.status.equals(
+                                                "PRESENT",
+                                                true
+                                            ) ||
+                                                    record.status.equals(
+                                                        "P",
+                                                        true
+                                                    )
+
+                                        Surface(
+                                            shape =
+                                                RoundedCornerShape(8.dp),
+                                            color =
+                                                if (isPresent)
+                                                    Color(0xFFE8F5E9)
+                                                else
+                                                    Color(0xFFFFEBEE)
+                                        ) {
+
+                                            Text(
+                                                text =
+                                                    record.status.uppercase(),
+                                                modifier = Modifier.padding(
+                                                    horizontal = 12.dp,
+                                                    vertical = 7.dp
+                                                ),
+                                                fontWeight =
+                                                    FontWeight.Bold,
+                                                color =
+                                                    if (isPresent)
+                                                        Color(0xFF2E7D32)
+                                                    else
+                                                        Color.Red
+                                            )
+                                        }
+                                    }
+
+                                    if (record.mobile.isNotBlank()) {
+
+                                        Spacer(
+                                            modifier =
+                                                Modifier.height(5.dp)
+                                        )
+
+                                        Text(
+                                            text =
+                                                "Mobile: ${record.mobile}",
+                                            style =
+                                                MaterialTheme.typography.bodySmall,
+                                            color = Color.Gray
+                                        )
+                                    }
+
+                                    Spacer(
+                                        modifier =
+                                            Modifier.height(5.dp)
+                                    )
+
+                                    Text(
+                                        text =
+                                            "IN: ${record.inTime.ifBlank { "--" }}    " +
+                                                    "OUT: ${record.outTime.ifBlank { "--" }}",
+                                        style =
+                                            MaterialTheme.typography.bodyMedium,
+                                        fontWeight =
+                                            FontWeight.Medium
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+        } else {
+
+            // ==================================================
+            // NO SEARCH YET
+            // ==================================================
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+
+                Text(
+                    text =
+                        "Select Standard and Date\nthen tap VIEW ATTENDANCE",
+                    textAlign = TextAlign.Center,
+                    color = Color.Gray,
+                    fontSize = 16.sp
+                )
+            }
+        }
+
+        Spacer(
+            modifier = Modifier.height(10.dp)
+        )
+
+
+        // ==================================================
+        // BACK
+        // ==================================================
+
+        IndiumOutlinedButton(
+            text = "BACK",
+            onClick = onBack
+        )
+    }
+}
